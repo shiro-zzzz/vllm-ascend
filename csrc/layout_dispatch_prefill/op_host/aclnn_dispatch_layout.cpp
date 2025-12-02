@@ -1,7 +1,6 @@
 #include <string.h>
 #include "graph/types.h"
 #include "aclnn_dispatch_layout.h"
-#include "aclnnInner_dispatch_layout.h"
 
 enum NnopbaseHcclServerType {
     NNOPBASE_HCCL_SERVER_TYPE_AICPU = 0,

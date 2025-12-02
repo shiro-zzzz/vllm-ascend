@@ -1,7 +1,6 @@
 #include <string.h>
 #include "graph/types.h"
 #include "aclnn_cam_moe_combine_normal.h"
-#include "aclnnInner_cam_moe_combine_normal.h"
 
 enum NnopbaseHcclServerType {
     NNOPBASE_HCCL_SERVER_TYPE_AICPU = 0,
