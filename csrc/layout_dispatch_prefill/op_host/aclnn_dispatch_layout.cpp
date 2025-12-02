@@ -14,6 +14,24 @@ extern "C" void __attribute__((weak)) NnopbaseSetHcclServerType(void *executor, 
 extern "C" {
 #endif
 
+extern aclnnStatus aclnnInnerDispatchLayoutGetWorkspaceSize(
+    const aclTensor *topkIdx,
+    int64_t numTokens,
+    int64_t numRanks,
+    int64_t numExperts,
+    int64_t numTopk,
+    const aclTensor *numTokensPerRank,
+    const aclTensor *numTokensPerExpert,
+    const aclTensor *isTokenInRank,
+    uint64_t *workspaceSize,
+    aclOpExecutor **executor);
+
+extern aclnnStatus aclnnInnerDispatchLayout(
+    void *workspace,
+    uint64_t workspaceSize,
+    aclOpExecutor *executor,
+    aclrtStream stream);
+
 aclnnStatus aclnnDispatchLayoutGetWorkspaceSize(
     const aclTensor *topkIdx,
     int64_t numTokens,

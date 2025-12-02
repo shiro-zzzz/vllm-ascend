@@ -13,6 +13,29 @@ extern "C" void __attribute__((weak)) NnopbaseSetHcclServerType(void *executor, 
 #ifdef __cplusplus
 extern "C" {
 #endif
+extern aclnnStatus aclnnInnerCamMoeCombineNormalGetWorkspaceSize(
+    const aclTensor *recvX,
+    const aclTensor *tokenSrcInfo,
+    const aclTensor *epRecvCounts,
+    const aclTensor *recvTopkWeights,
+    const aclTensor *tpRecvCountsOptional,
+    char *epGroupName,
+    int64_t epWorldSize,
+    int64_t epRankId,
+    char *tpGroupNameOptional,
+    int64_t tpWorldSize,
+    int64_t tpRankId,
+    int64_t moeExpertNum,
+    int64_t globalBs,
+    const aclTensor *out,
+    uint64_t *workspaceSize,
+    aclOpExecutor **executor);
+
+extern aclnnStatus aclnnInnerCamMoeCombineNormal(
+    void *workspace,
+    uint64_t workspaceSize,
+    aclOpExecutor *executor,
+    aclrtStream stream);
 
 aclnnStatus aclnnCamMoeCombineNormalGetWorkspaceSize(
     const aclTensor *recvX,
