@@ -15,7 +15,14 @@ elif [[ "$SOC_VERSION" =~ ^ascend910b ]]; then
     SOC_ARG="ascend910b"
 elif [[ "$SOC_VERSION" =~ ^ascend910_93 ]]; then
     # ASCEND910C (A3) series
-    CUSTOM_OPS="grouped_matmul_swiglu_quant_weight_nz_tensor_list"
+    CUSTOM_OPS_ARRAY=(
+        "grouped_matmul_swiglu_quant_weight_nz_tensor_list"
+        "combine_prefill"
+        "dispatch_prefill"
+        "layout_dispatch_prefill"
+        "notify_dispatch_prefill"
+    )
+    CUSTOM_OPS=$(IFS=';'; echo "${CUSTOM_OPS_ARRAY[*]}")
     SOC_ARG="ascend910_93"
 else
     # others
@@ -27,7 +34,7 @@ fi
 cd csrc
 rm -rf build output
 echo "building custom ops $CUSTOM_OPS for $SOC_VERSION"
-bash build.sh -n $CUSTOM_OPS -c $SOC_ARG
+bash build.sh -n "$CUSTOM_OPS" -c "$SOC_ARG"
 
 # install custom ops to vllm_ascend/_cann_ops_custom
 ./output/CANN-custom_ops*.run --install-path=$ROOT_DIR/vllm_ascend/_cann_ops_custom
