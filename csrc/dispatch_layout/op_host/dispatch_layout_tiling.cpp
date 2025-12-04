@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <string>
 
-#include "error/error_log.h"
+#include "log/ops_log.h"
 #include "graph/utils/type_utils.h"
 #include "register/op_def_registry.h"
 #include "../op_kernel/dispatch_layout_tiling.h"
@@ -44,37 +44,37 @@ constexpr uint32_t K_MAX = 16;
 namespace optiling {
 static void PrintTilingDataInfo(const char *nodeName, DispatchLayoutTilingData &tilingData)
 {
-    OP_LOGD(nodeName, "numToken is %u.", tilingData.dispatchLayoutInfo.numTokens);
-    OP_LOGD(nodeName, "numRanks is %u.", tilingData.dispatchLayoutInfo.numRanks);
-    OP_LOGD(nodeName, "numExperts is %u.", tilingData.dispatchLayoutInfo.numExperts);
-    OP_LOGD(nodeName, "numTopk is %u.", tilingData.dispatchLayoutInfo.numTopk);
-    OP_LOGD(nodeName, "totalUbSize is %lu.", tilingData.dispatchLayoutInfo.totalUbSize);
+    OPS_LOG_D(nodeName, "numToken is %u.", tilingData.dispatchLayoutInfo.numTokens);
+    OPS_LOG_D(nodeName, "numRanks is %u.", tilingData.dispatchLayoutInfo.numRanks);
+    OPS_LOG_D(nodeName, "numExperts is %u.", tilingData.dispatchLayoutInfo.numExperts);
+    OPS_LOG_D(nodeName, "numTopk is %u.", tilingData.dispatchLayoutInfo.numTopk);
+    OPS_LOG_D(nodeName, "totalUbSize is %lu.", tilingData.dispatchLayoutInfo.totalUbSize);
 }
 
 static ge::graphStatus GetAttrAndSetTilingData(gert::TilingContext *context, const char *nodeName,
     DispatchLayoutTilingData &tilingData)
 {
     auto attrs = context->GetAttrs();
-    OP_TILING_CHECK(attrs == nullptr, OP_LOGE(nodeName, "attrs is nullptr."), return ge::GRAPH_FAILED);
+    OPS_CHECK(attrs == nullptr, OPS_LOG_E(nodeName, "attrs is nullptr."), return ge::GRAPH_FAILED);
 
     auto numTokensPtr = attrs->GetAttrPointer<int64_t>(static_cast<int>(ATTR_NUM_TOKENS_INDEX));
     auto numRanksPtr = attrs->GetAttrPointer<int64_t>(static_cast<int>(ATTR_NUM_RANKS_INDEX));
     auto numExpertsPtr = attrs->GetAttrPointer<int64_t>(ATTR_NUM_EXPERTS_INDEX);
     auto numTopkPtr = attrs->GetAttrPointer<int64_t>(static_cast<int>(ATTR_NUM_TOPK_INDEX));
 
-    OP_TILING_CHECK(numTokensPtr == nullptr, OP_LOGE(nodeName, "numTokensPtr is null."), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(numRanksPtr == nullptr, OP_LOGE(nodeName, "numRanksPtr is null."), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(numExpertsPtr == nullptr, OP_LOGE(nodeName, "numExpertsPtr is null."), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(numTopkPtr == nullptr, OP_LOGE(nodeName, "numTopkPtr is null."), return ge::GRAPH_FAILED);
+    OPS_CHECK(numTokensPtr == nullptr, OPS_LOG_E(nodeName, "numTokensPtr is null."), return ge::GRAPH_FAILED);
+    OPS_CHECK(numRanksPtr == nullptr, OPS_LOG_E(nodeName, "numRanksPtr is null."), return ge::GRAPH_FAILED);
+    OPS_CHECK(numExpertsPtr == nullptr, OPS_LOG_E(nodeName, "numExpertsPtr is null."), return ge::GRAPH_FAILED);
+    OPS_CHECK(numTopkPtr == nullptr, OPS_LOG_E(nodeName, "numTopkPtr is null."), return ge::GRAPH_FAILED);
 
-    OP_TILING_CHECK((*numRanksPtr <= 0) || (*numRanksPtr > MAX_COMM_WORLD_SIZE),
-        OP_LOGE(nodeName, "rankSize is invalid, only support (0, %ld], but got rankSize=%ld.", MAX_COMM_WORLD_SIZE, *numRanksPtr),
+    OPS_CHECK((*numRanksPtr <= 0) || (*numRanksPtr > MAX_COMM_WORLD_SIZE),
+        OPS_LOG_E(nodeName, "rankSize is invalid, only support (0, %ld], but got rankSize=%ld.", MAX_COMM_WORLD_SIZE, *numRanksPtr),
         return ge::GRAPH_FAILED);
-    OP_TILING_CHECK((*numExpertsPtr <= 0) || (*numExpertsPtr > MAX_MOE_EXPERTS_NUM),
-        OP_LOGE(nodeName, "numExperts is invalid, only support (0, %ld], but got numExperts=%ld.", MAX_MOE_EXPERTS_NUM, *numExpertsPtr),
+    OPS_CHECK((*numExpertsPtr <= 0) || (*numExpertsPtr > MAX_MOE_EXPERTS_NUM),
+        OPS_LOG_E(nodeName, "numExperts is invalid, only support (0, %ld], but got numExperts=%ld.", MAX_MOE_EXPERTS_NUM, *numExpertsPtr),
         return ge::GRAPH_FAILED);
-    OP_TILING_CHECK((*numTopkPtr <= 0) || (*numTopkPtr > K_MAX),
-        OP_LOGE(nodeName, "numTopkPtr is invalid, only support (0, %u], but got numTopk=%ld.", K_MAX, *numTopkPtr),
+    OPS_CHECK((*numTopkPtr <= 0) || (*numTopkPtr > K_MAX),
+        OPS_LOG_E(nodeName, "numTopkPtr is invalid, only support (0, %u], but got numTopk=%ld.", K_MAX, *numTopkPtr),
         return ge::GRAPH_FAILED);
 
     tilingData.dispatchLayoutInfo.numTokens = static_cast<uint32_t>(*numTokensPtr);
@@ -88,7 +88,7 @@ static ge::graphStatus GetAttrAndSetTilingData(gert::TilingContext *context, con
 static ge::graphStatus SetWorkSpace(gert::TilingContext *context, const char *nodeName)
 {
     size_t *workSpaces = context->GetWorkspaceSizes(1);
-    OP_TILING_CHECK(workSpaces == nullptr, OP_LOGE(nodeName, "workSpaces is nullptr."), return ge::GRAPH_FAILED);
+    OPS_CHECK(workSpaces == nullptr, OPS_LOG_E(nodeName, "workSpaces is nullptr."), return ge::GRAPH_FAILED);
     workSpaces[0] = SYSTEM_NEED_WORKSPACE + KERNEL_USE_WORKSPACE + KERNEL_A2_ARG_SIZE;
     return ge::GRAPH_SUCCESS;
 }
@@ -100,22 +100,22 @@ static bool CheckTensorDataType(gert::TilingContext *context, const char *nodeNa
     auto numTokensPerExpert = context->GetOutputDesc(OUTPUT_NUM_TOKEN_PER_EXPERT_INDEX);
     auto isTokenInRank = context->GetOutputDesc(OUTPUT_IS_TOKEN_IN_RANK_INDEX);
 
-    OP_TILING_CHECK(topkIdx == nullptr, OP_LOGE(nodeName, "topkIdx is null."), return false);
-    OP_TILING_CHECK(numTokensPerRank == nullptr, OP_LOGE(nodeName, "numTokensPerRank is null."), return false);
-    OP_TILING_CHECK(numTokensPerExpert == nullptr, OP_LOGE(nodeName, "numTokensPerExpert is null."), return false);
-    OP_TILING_CHECK(isTokenInRank == nullptr, OP_LOGE(nodeName, "isTokenInRank is null."), return false);
+    OPS_CHECK(topkIdx == nullptr, OPS_LOG_E(nodeName, "topkIdx is null."), return false);
+    OPS_CHECK(numTokensPerRank == nullptr, OPS_LOG_E(nodeName, "numTokensPerRank is null."), return false);
+    OPS_CHECK(numTokensPerExpert == nullptr, OPS_LOG_E(nodeName, "numTokensPerExpert is null."), return false);
+    OPS_CHECK(isTokenInRank == nullptr, OPS_LOG_E(nodeName, "isTokenInRank is null."), return false);
 
-    OP_TILING_CHECK((topkIdx->GetDataType() != ge::DT_INT64),
-        OP_LOGE(nodeName, "topkIdx datatype is invalid, datatype should be int, but is %d.",
+    OPS_CHECK((topkIdx->GetDataType() != ge::DT_INT64),
+        OPS_LOG_E(nodeName, "topkIdx datatype is invalid, datatype should be int, but is %d.",
             static_cast<ge::DataType>(topkIdx->GetDataType())), return false);
-    OP_TILING_CHECK((numTokensPerRank->GetDataType() != ge::DT_INT32),
-        OP_LOGE(nodeName, "numTokensPerRank datatype is invalid, datatype should be int, but is %d.",
+    OPS_CHECK((numTokensPerRank->GetDataType() != ge::DT_INT32),
+        OPS_LOG_E(nodeName, "numTokensPerRank datatype is invalid, datatype should be int, but is %d.",
             static_cast<ge::DataType>(numTokensPerRank->GetDataType())), return false);
-    OP_TILING_CHECK((numTokensPerExpert->GetDataType() != ge::DT_INT32),
-        OP_LOGE(nodeName, "numTokensPerExpert datatype is invalid, datatype should be int, but is %d.",
+    OPS_CHECK((numTokensPerExpert->GetDataType() != ge::DT_INT32),
+        OPS_LOG_E(nodeName, "numTokensPerExpert datatype is invalid, datatype should be int, but is %d.",
             static_cast<ge::DataType>(numTokensPerExpert->GetDataType())), return false);
-    OP_TILING_CHECK((isTokenInRank->GetDataType() != ge::DT_INT32),
-        OP_LOGE(nodeName, "isTokenInRank datatype is invalid, datatype should be int, but is %d.",
+    OPS_CHECK((isTokenInRank->GetDataType() != ge::DT_INT32),
+        OPS_LOG_E(nodeName, "isTokenInRank datatype is invalid, datatype should be int, but is %d.",
             static_cast<ge::DataType>(isTokenInRank->GetDataType())), return false);
 
     return true;
@@ -127,8 +127,8 @@ static bool CheckTensorShape(gert::TilingContext *context, const char *nodeName)
     int64_t topkIdxDim0 = topkIdxStorageShape->GetStorageShape().GetDim(0);
     int64_t topkIdxDim1 = topkIdxStorageShape->GetStorageShape().GetDim(1);
     
-    OP_TILING_CHECK((topkIdxStorageShape->GetStorageShape().GetDimNum() != TWO_DIMS),
-        OP_LOGE(nodeName, "topkIdx must be 2-dimension, but get %lu dim.",
+    OPS_CHECK((topkIdxStorageShape->GetStorageShape().GetDimNum() != TWO_DIMS),
+        OPS_LOG_E(nodeName, "topkIdx must be 2-dimension, but get %lu dim.",
             topkIdxStorageShape->GetStorageShape().GetDimNum()), return false);
 
     return true;
@@ -137,12 +137,12 @@ static bool CheckTensorShape(gert::TilingContext *context, const char *nodeName)
 static ge::graphStatus TilingCheckTensor(
     gert::TilingContext *context, const char *nodeName)
 {
-    OP_TILING_CHECK(!CheckTensorDataType(context, nodeName),
-        OP_LOGE(nodeName, "params dataType is invalid."),
+    OPS_CHECK(!CheckTensorDataType(context, nodeName),
+        OPS_LOG_E(nodeName, "params dataType is invalid."),
         return ge::GRAPH_FAILED);
 
-    OP_TILING_CHECK(!CheckTensorShape(context, nodeName),
-        OP_LOGE(nodeName, "params dataType is invalid."),
+    OPS_CHECK(!CheckTensorShape(context, nodeName),
+        OPS_LOG_E(nodeName, "params dataType is invalid."),
         return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -152,19 +152,19 @@ static ge::graphStatus DispatchLayoutTilingFuncImpl(gert::TilingContext *context
 {
     const char *nodeName = context->GetNodeName();
     DispatchLayoutTilingData *tilingData = context->GetTilingData<DispatchLayoutTilingData>();
-    OP_TILING_CHECK(tilingData == nullptr, OP_LOGE(nodeName, "tilingData is nullptr."), return ge::GRAPH_FAILED);
-    OP_LOGI(nodeName, "Enter NotifyDispatch tiling check func.");
+    OPS_CHECK(tilingData == nullptr, OPS_LOG_E(nodeName, "tilingData is nullptr."), return ge::GRAPH_FAILED);
+    OPS_LOG_I(nodeName, "Enter NotifyDispatch tiling check func.");
 
-    OP_TILING_CHECK(GetAttrAndSetTilingData(context, nodeName, *tilingData) != ge::GRAPH_SUCCESS,
-        OP_LOGE(nodeName, "Get attr and set tiling data failed."),
+    OPS_CHECK(GetAttrAndSetTilingData(context, nodeName, *tilingData) != ge::GRAPH_SUCCESS,
+        OPS_LOG_E(nodeName, "Get attr and set tiling data failed."),
         return ge::GRAPH_FAILED);
 
-    OP_TILING_CHECK(TilingCheckTensor(context, nodeName) != ge::GRAPH_SUCCESS,
-        OP_LOGE(nodeName, "Tiling check param failed."),
+    OPS_CHECK(TilingCheckTensor(context, nodeName) != ge::GRAPH_SUCCESS,
+        OPS_LOG_E(nodeName, "Tiling check param failed."),
         return ge::GRAPH_FAILED);
 
-    OP_TILING_CHECK(SetWorkSpace(context, nodeName) != ge::GRAPH_SUCCESS,
-        OP_LOGE(nodeName, "Tiling set workspace failed."),
+    OPS_CHECK(SetWorkSpace(context, nodeName) != ge::GRAPH_SUCCESS,
+        OPS_LOG_E(nodeName, "Tiling set workspace failed."),
         return ge::GRAPH_FAILED);
 
     fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
@@ -182,7 +182,7 @@ static ge::graphStatus DispatchLayoutTilingFuncImpl(gert::TilingContext *context
     blockDim = aivNum;
     context->SetBlockDim(blockDim);
     tilingData->dispatchLayoutInfo.totalUbSize = ubSize;
-    OP_LOGD(nodeName, "blockDim=%u, aivNum=%u, ubSize=%lu", blockDim, aivNum, ubSize);
+    OPS_LOG_D(nodeName, "blockDim=%u, aivNum=%u, ubSize=%lu", blockDim, aivNum, ubSize);
     PrintTilingDataInfo(nodeName, *tilingData);
     return ge::GRAPH_SUCCESS;
 }

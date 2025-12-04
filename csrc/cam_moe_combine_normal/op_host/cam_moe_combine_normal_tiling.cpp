@@ -15,7 +15,7 @@
 
 #include "register/tilingdata_base.h"
 #include "tiling/tiling_api.h"
-#include "error/error_log.h"
+#include "log/ops_log.h"
 #include "graph/utils/type_utils.h"
 #include "register/op_def_registry.h"
 #include "../op_kernel/cam_moe_combine_normal_tiling.h"
@@ -31,17 +31,17 @@ namespace {
         {
             uint16_t defaultWindowSize = 200;
             if (getenv(HCCL_BUFFSIZE) == nullptr) {
-                OP_LOGD("", "Env HCCL_BUFFSIZE don't set");
+                OPS_LOG_D("", "Env HCCL_BUFFSIZE don't set");
             } else {
                 try {
                     std::string envStr(getenv(HCCL_BUFFSIZE));
                     defaultWindowSize = std::stoi(envStr);
                 } catch (...) {
-                    OP_LOGE("", "Unknown Exception encountered when parser env HCCL_BUFFERSIZE");
+                    OPS_LOG_E("", "Unknown Exception encountered when parser env HCCL_BUFFERSIZE");
                 }
             }
             const uint64_t maxWindowSize = static_cast<uint64_t>(defaultWindowSize) * 1024UL * 1024UL;
-            OP_LOGI("", "Get maxWindowSize is %lu", maxWindowSize);
+            OPS_LOG_I("", "Get maxWindowSize is %lu", maxWindowSize);
             return maxWindowSize;
         }
     };
@@ -101,27 +101,27 @@ namespace optiling {
 // Specific to A3
 static void PrintTilingDataInfo(const char *nodeName, CamMoeCombineNormalTilingData& tilingData)
 {
-    OP_LOGD(nodeName, "epWorldSize is %u.", tilingData.camMoeCombineNormalInfo.epWorldSize);
-    OP_LOGD(nodeName, "tpWorldSize is %u.", tilingData.camMoeCombineNormalInfo.tpWorldSize);
-    OP_LOGD(nodeName, "epRankId is %u.", tilingData.camMoeCombineNormalInfo.epRankId);
-    OP_LOGD(nodeName, "tpRankId is %u.", tilingData.camMoeCombineNormalInfo.tpRankId);
-    OP_LOGD(nodeName, "expertShardType is %u.", tilingData.camMoeCombineNormalInfo.expertShardType);
-    OP_LOGD(nodeName, "moeExpertNum is %u.", tilingData.camMoeCombineNormalInfo.moeExpertNum);
-    OP_LOGD(nodeName, "moeExpertPerRankNum is %u.", tilingData.camMoeCombineNormalInfo.moeExpertPerRankNum);
-    OP_LOGD(nodeName, "globalBs is %u.", tilingData.camMoeCombineNormalInfo.globalBs);
-    OP_LOGD(nodeName, "bs is %u.", tilingData.camMoeCombineNormalInfo.bs);
-    OP_LOGD(nodeName, "k is %u.", tilingData.camMoeCombineNormalInfo.k);
-    OP_LOGD(nodeName, "h is %u.", tilingData.camMoeCombineNormalInfo.h);
-    OP_LOGD(nodeName, "aivNum is %u.", tilingData.camMoeCombineNormalInfo.aivNum);
-    OP_LOGD(nodeName, "totalUbSize is %lu.", tilingData.camMoeCombineNormalInfo.totalUbSize);
-    OP_LOGD(nodeName, "totalWinSize is %lu.", tilingData.camMoeCombineNormalInfo.totalWinSize);
+    OPS_LOG_D(nodeName, "epWorldSize is %u.", tilingData.camMoeCombineNormalInfo.epWorldSize);
+    OPS_LOG_D(nodeName, "tpWorldSize is %u.", tilingData.camMoeCombineNormalInfo.tpWorldSize);
+    OPS_LOG_D(nodeName, "epRankId is %u.", tilingData.camMoeCombineNormalInfo.epRankId);
+    OPS_LOG_D(nodeName, "tpRankId is %u.", tilingData.camMoeCombineNormalInfo.tpRankId);
+    OPS_LOG_D(nodeName, "expertShardType is %u.", tilingData.camMoeCombineNormalInfo.expertShardType);
+    OPS_LOG_D(nodeName, "moeExpertNum is %u.", tilingData.camMoeCombineNormalInfo.moeExpertNum);
+    OPS_LOG_D(nodeName, "moeExpertPerRankNum is %u.", tilingData.camMoeCombineNormalInfo.moeExpertPerRankNum);
+    OPS_LOG_D(nodeName, "globalBs is %u.", tilingData.camMoeCombineNormalInfo.globalBs);
+    OPS_LOG_D(nodeName, "bs is %u.", tilingData.camMoeCombineNormalInfo.bs);
+    OPS_LOG_D(nodeName, "k is %u.", tilingData.camMoeCombineNormalInfo.k);
+    OPS_LOG_D(nodeName, "h is %u.", tilingData.camMoeCombineNormalInfo.h);
+    OPS_LOG_D(nodeName, "aivNum is %u.", tilingData.camMoeCombineNormalInfo.aivNum);
+    OPS_LOG_D(nodeName, "totalUbSize is %lu.", tilingData.camMoeCombineNormalInfo.totalUbSize);
+    OPS_LOG_D(nodeName, "totalWinSize is %lu.", tilingData.camMoeCombineNormalInfo.totalWinSize);
 }
 
 static ge::graphStatus GetAttrAndSetTilingData(gert::TilingContext *context, CamMoeCombineNormalTilingData &tilingData,
     const char *nodeName, std::string &groupEp, std::string &groupTp)
 {
     auto attrs = context->GetAttrs();
-    OP_TILING_CHECK(attrs == nullptr, OP_LOGE(nodeName, "attrs is null."), return ge::GRAPH_FAILED);
+    OPS_CHECK(attrs == nullptr, OPS_LOG_E(nodeName, "attrs is null."), return ge::GRAPH_FAILED);
 
     auto groupEpPtr = attrs->GetAttrPointer<char>(static_cast<int>(ATTR_GROUP_EP_INDEX));
     auto groupTpPtr = attrs->GetAttrPointer<char>(static_cast<int>(ATTR_GROUP_TP_INDEX));
@@ -132,48 +132,48 @@ static ge::graphStatus GetAttrAndSetTilingData(gert::TilingContext *context, Cam
     auto moeExpertNumPtr = attrs->GetAttrPointer<int64_t>(ATTR_MOE_EXPERT_NUM_INDEX);
 
     // Check for null
-    OP_TILING_CHECK((groupEpPtr == nullptr) || (strnlen(groupEpPtr, MAX_GROUP_NAME_LENGTH) == 0) ||
-        (strnlen(groupEpPtr, MAX_GROUP_NAME_LENGTH) == MAX_GROUP_NAME_LENGTH), OP_LOGE(nodeName, "groupEp is invalid."),
+    OPS_CHECK((groupEpPtr == nullptr) || (strnlen(groupEpPtr, MAX_GROUP_NAME_LENGTH) == 0) ||
+        (strnlen(groupEpPtr, MAX_GROUP_NAME_LENGTH) == MAX_GROUP_NAME_LENGTH), OPS_LOG_E(nodeName, "groupEp is invalid."),
         return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(epWorldSizePtr == nullptr, OP_LOGE(nodeName, "epWorldSize is null."), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(tpWorldSizePtr == nullptr, OP_LOGE(nodeName, "tpWorldSize is null."), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(epRankIdPtr == nullptr, OP_LOGE(nodeName, "epRankId is null."), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(tpRankIdPtr == nullptr, OP_LOGE(nodeName, "tpRankId is null."), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(moeExpertNumPtr == nullptr, OP_LOGE(nodeName, "moeExpertNum is null."), return ge::GRAPH_FAILED);
+    OPS_CHECK(epWorldSizePtr == nullptr, OPS_LOG_E(nodeName, "epWorldSize is null."), return ge::GRAPH_FAILED);
+    OPS_CHECK(tpWorldSizePtr == nullptr, OPS_LOG_E(nodeName, "tpWorldSize is null."), return ge::GRAPH_FAILED);
+    OPS_CHECK(epRankIdPtr == nullptr, OPS_LOG_E(nodeName, "epRankId is null."), return ge::GRAPH_FAILED);
+    OPS_CHECK(tpRankIdPtr == nullptr, OPS_LOG_E(nodeName, "tpRankId is null."), return ge::GRAPH_FAILED);
+    OPS_CHECK(moeExpertNumPtr == nullptr, OPS_LOG_E(nodeName, "moeExpertNum is null."), return ge::GRAPH_FAILED);
 
     // Check if it meets uint32_t and other constraints
     int64_t moeExpertNum = *moeExpertNumPtr;
     int64_t epWorldSize = *epWorldSizePtr;
-    OP_TILING_CHECK((epWorldSize < MIN_EP_WORLD_SIZE) || (epWorldSize > MAX_EP_WORLD_SIZE),
-        OP_LOGE(nodeName, "epWorldSize is invalid, only support [%ld, %ld], but got epWorldSize=%ld.",
+    OPS_CHECK((epWorldSize < MIN_EP_WORLD_SIZE) || (epWorldSize > MAX_EP_WORLD_SIZE),
+        OPS_LOG_E(nodeName, "epWorldSize is invalid, only support [%ld, %ld], but got epWorldSize=%ld.",
         MIN_EP_WORLD_SIZE, MAX_EP_WORLD_SIZE, epWorldSize), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK((*tpWorldSizePtr < 0) || (*tpWorldSizePtr > MAX_TP_WORLD_SIZE),
-        OP_LOGE(nodeName, "tpWorldSize is invalid, only support [0, %ld], but got tpWorldSize=%ld.",
+    OPS_CHECK((*tpWorldSizePtr < 0) || (*tpWorldSizePtr > MAX_TP_WORLD_SIZE),
+        OPS_LOG_E(nodeName, "tpWorldSize is invalid, only support [0, %ld], but got tpWorldSize=%ld.",
         MAX_TP_WORLD_SIZE, *tpWorldSizePtr), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK((*epRankIdPtr < 0) || (*epRankIdPtr >= epWorldSize),
-        OP_LOGE(nodeName, "epRankId is invalid, only support [0, %ld), but got epRankId=%ld.",
+    OPS_CHECK((*epRankIdPtr < 0) || (*epRankIdPtr >= epWorldSize),
+        OPS_LOG_E(nodeName, "epRankId is invalid, only support [0, %ld), but got epRankId=%ld.",
         epWorldSize, *epRankIdPtr), return ge::GRAPH_FAILED);
 
     if (*tpWorldSizePtr > 1) {
-        OP_TILING_CHECK((*tpRankIdPtr < 0) || (*tpRankIdPtr >= *tpWorldSizePtr),
-            OP_LOGE(nodeName, "tpRankId is invalid, only support [0, %ld), but got tpRankId=%ld.",
+        OPS_CHECK((*tpRankIdPtr < 0) || (*tpRankIdPtr >= *tpWorldSizePtr),
+            OPS_LOG_E(nodeName, "tpRankId is invalid, only support [0, %ld), but got tpRankId=%ld.",
             *tpWorldSizePtr, *tpRankIdPtr), return ge::GRAPH_FAILED);
-        OP_TILING_CHECK((groupTpPtr == nullptr) || (strnlen(groupTpPtr, MAX_GROUP_NAME_LENGTH) == 0) ||
+        OPS_CHECK((groupTpPtr == nullptr) || (strnlen(groupTpPtr, MAX_GROUP_NAME_LENGTH) == 0) ||
             (strnlen(groupTpPtr, MAX_GROUP_NAME_LENGTH) == MAX_GROUP_NAME_LENGTH),
-            OP_LOGE(nodeName, "groupTpPtr is null."), return ge::GRAPH_FAILED);
+            OPS_LOG_E(nodeName, "groupTpPtr is null."), return ge::GRAPH_FAILED);
         groupTp = std::string(groupTpPtr);
     } else {
-        OP_TILING_CHECK(*tpRankIdPtr != 0,
-            OP_LOGE(nodeName, "tpRankId is invalid, NoTp mode only support 0, but got tpRankId=%ld.", *tpRankIdPtr),
+        OPS_CHECK(*tpRankIdPtr != 0,
+            OPS_LOG_E(nodeName, "tpRankId is invalid, NoTp mode only support 0, but got tpRankId=%ld.", *tpRankIdPtr),
             return ge::GRAPH_FAILED);
     }
-    OP_TILING_CHECK((moeExpertNum <= 0) || (moeExpertNum > MOE_EXPERT_MAX_NUM),
-        OP_LOGE(nodeName, "moeExpertNum is invalid, only support (0, %ld], but got moeExpertNum=%ld.",
+    OPS_CHECK((moeExpertNum <= 0) || (moeExpertNum > MOE_EXPERT_MAX_NUM),
+        OPS_LOG_E(nodeName, "moeExpertNum is invalid, only support (0, %ld], but got moeExpertNum=%ld.",
         MOE_EXPERT_MAX_NUM, moeExpertNum), return ge::GRAPH_FAILED);
     int64_t moePerRankNum = moeExpertNum / epWorldSize;
     int64_t curDispatchStatusNum = moePerRankNum * epWorldSize;
-    OP_TILING_CHECK((curDispatchStatusNum > DISPATCH_STATUS_MAX_SUPPORT_NUM),
-        OP_LOGE(nodeName, "The moe experts num must meet the conditions,"
+    OPS_CHECK((curDispatchStatusNum > DISPATCH_STATUS_MAX_SUPPORT_NUM),
+        OPS_LOG_E(nodeName, "The moe experts num must meet the conditions,"
         " (moeExpertNum / epWorldSize) * epWorldSize <= 1280, but cur is %ld.",
         curDispatchStatusNum), return ge::GRAPH_FAILED);
 
@@ -190,27 +190,27 @@ static ge::graphStatus GetAttrAndSetTilingData(gert::TilingContext *context, Cam
 static bool CheckInputTensorDim(gert::TilingContext *context, const char *nodeName)
 {
     const gert::StorageShape *recvXStorageShape = context->GetInputShape(RECV_X_INDEX);
-    OP_TILING_CHECK(recvXStorageShape == nullptr, OP_LOGE(nodeName, "recvX is null."), return false);
-    OP_TILING_CHECK(recvXStorageShape->GetStorageShape().GetDimNum() != TWO_DIMS,
-        OP_LOGE(nodeName, "recvX must be 2-dimension, but got %lu dim",
+    OPS_CHECK(recvXStorageShape == nullptr, OPS_LOG_E(nodeName, "recvX is null."), return false);
+    OPS_CHECK(recvXStorageShape->GetStorageShape().GetDimNum() != TWO_DIMS,
+        OPS_LOG_E(nodeName, "recvX must be 2-dimension, but got %lu dim",
         recvXStorageShape->GetStorageShape().GetDimNum()), return false);
-    OP_LOGD(nodeName, "recvX dim0 = %ld", recvXStorageShape->GetStorageShape().GetDim(0));
-    OP_LOGD(nodeName, "recvX dim1 = %ld", recvXStorageShape->GetStorageShape().GetDim(1));
+    OPS_LOG_D(nodeName, "recvX dim0 = %ld", recvXStorageShape->GetStorageShape().GetDim(0));
+    OPS_LOG_D(nodeName, "recvX dim1 = %ld", recvXStorageShape->GetStorageShape().GetDim(1));
 
     const gert::StorageShape *tokenSrcInfoStorageShape = context->GetInputShape(TOKEN_SRC_INFO_INDEX);
-    OP_TILING_CHECK(tokenSrcInfoStorageShape == nullptr, OP_LOGE(nodeName, "tokenSrcInfoForCombine is null."), return false);
-    OP_TILING_CHECK(tokenSrcInfoStorageShape->GetStorageShape().GetDimNum() != ONE_DIM,
-        OP_LOGE(nodeName, "tokenSrcInfoForCombine must be 1-dimension, but got %lu dim",
+    OPS_CHECK(tokenSrcInfoStorageShape == nullptr, OPS_LOG_E(nodeName, "tokenSrcInfoForCombine is null."), return false);
+    OPS_CHECK(tokenSrcInfoStorageShape->GetStorageShape().GetDimNum() != ONE_DIM,
+        OPS_LOG_E(nodeName, "tokenSrcInfoForCombine must be 1-dimension, but got %lu dim",
         tokenSrcInfoStorageShape->GetStorageShape().GetDimNum()), return false);
-    OP_LOGD(nodeName, "tokenSrcInfoForCombine dim0 = %ld", tokenSrcInfoStorageShape->GetStorageShape().GetDim(0));
+    OPS_LOG_D(nodeName, "tokenSrcInfoForCombine dim0 = %ld", tokenSrcInfoStorageShape->GetStorageShape().GetDim(0));
 
     const gert::StorageShape *topkWeightsStorageShape = context->GetInputShape(TOPK_WEIGHTS_INDEX);
-    OP_TILING_CHECK(topkWeightsStorageShape == nullptr, OP_LOGE(nodeName, "topkWeights is null."), return false);
-    OP_TILING_CHECK(topkWeightsStorageShape->GetStorageShape().GetDimNum() != TWO_DIMS,
-        OP_LOGE(nodeName, "topkWeights must be 2-dimension, but got %lu dim",
+    OPS_CHECK(topkWeightsStorageShape == nullptr, OPS_LOG_E(nodeName, "topkWeights is null."), return false);
+    OPS_CHECK(topkWeightsStorageShape->GetStorageShape().GetDimNum() != TWO_DIMS,
+        OPS_LOG_E(nodeName, "topkWeights must be 2-dimension, but got %lu dim",
         topkWeightsStorageShape->GetStorageShape().GetDimNum()), return false);
-    OP_LOGD(nodeName, "topkWeights dim0 = %ld", topkWeightsStorageShape->GetStorageShape().GetDim(0));
-    OP_LOGD(nodeName, "topkWeights dim1 = %ld", topkWeightsStorageShape->GetStorageShape().GetDim(1));
+    OPS_LOG_D(nodeName, "topkWeights dim0 = %ld", topkWeightsStorageShape->GetStorageShape().GetDim(0));
+    OPS_LOG_D(nodeName, "topkWeights dim1 = %ld", topkWeightsStorageShape->GetStorageShape().GetDim(1));
 
     return true;
 }
@@ -218,11 +218,11 @@ static bool CheckInputTensorDim(gert::TilingContext *context, const char *nodeNa
 static bool CheckOptionalInputTensorDim(gert::TilingContext *context, const char *nodeName)
 {
     const gert::StorageShape *tpRecvCountsStorageShape = context->GetOptionalInputShape(TP_RECV_COUNTS_INDEX);
-    OP_TILING_CHECK(tpRecvCountsStorageShape == nullptr, OP_LOGE(nodeName, "tpRecvCounts is null."), return false);
-    OP_TILING_CHECK(tpRecvCountsStorageShape->GetStorageShape().GetDimNum() != ONE_DIM,
-        OP_LOGE(nodeName, "tpRecvCounts must be 1-dimension, but got %lu dim",
+    OPS_CHECK(tpRecvCountsStorageShape == nullptr, OPS_LOG_E(nodeName, "tpRecvCounts is null."), return false);
+    OPS_CHECK(tpRecvCountsStorageShape->GetStorageShape().GetDimNum() != ONE_DIM,
+        OPS_LOG_E(nodeName, "tpRecvCounts must be 1-dimension, but got %lu dim",
         tpRecvCountsStorageShape->GetStorageShape().GetDimNum()), return false);
-    OP_LOGD(nodeName, "tpRecvCounts dim0 = %ld", tpRecvCountsStorageShape->GetStorageShape().GetDim(0));
+    OPS_LOG_D(nodeName, "tpRecvCounts dim0 = %ld", tpRecvCountsStorageShape->GetStorageShape().GetDim(0));
 
     return true;
 }
@@ -230,26 +230,26 @@ static bool CheckOptionalInputTensorDim(gert::TilingContext *context, const char
 static bool CheckOutputTensorDim(gert::TilingContext *context, const char *nodeName)
 {
     const gert::StorageShape *xStorageShape = context->GetOutputShape(OUTPUT_X_INDEX);
-    OP_TILING_CHECK(xStorageShape == nullptr, OP_LOGE(nodeName, "x is null."), return false);
-    OP_TILING_CHECK(xStorageShape->GetStorageShape().GetDimNum() != TWO_DIMS,
-        OP_LOGE(nodeName, "x must be 2-dimension, but got %lu dim", xStorageShape->GetStorageShape().GetDimNum()),
+    OPS_CHECK(xStorageShape == nullptr, OPS_LOG_E(nodeName, "x is null."), return false);
+    OPS_CHECK(xStorageShape->GetStorageShape().GetDimNum() != TWO_DIMS,
+        OPS_LOG_E(nodeName, "x must be 2-dimension, but got %lu dim", xStorageShape->GetStorageShape().GetDimNum()),
         return false);
-    OP_LOGD(nodeName, "x dim0 = %ld", xStorageShape->GetStorageShape().GetDim(0));
-    OP_LOGD(nodeName, "x dim1 = %ld", xStorageShape->GetStorageShape().GetDim(1));
+    OPS_LOG_D(nodeName, "x dim0 = %ld", xStorageShape->GetStorageShape().GetDim(0));
+    OPS_LOG_D(nodeName, "x dim1 = %ld", xStorageShape->GetStorageShape().GetDim(1));
 
     return true;
 }
 
 static bool CheckTensorDim(gert::TilingContext *context, const char *nodeName)
 {
-    OP_TILING_CHECK(!CheckInputTensorDim(context, nodeName),
-        OP_LOGE(nodeName, "param shape of input tensor is invalid"), return false);
+    OPS_CHECK(!CheckInputTensorDim(context, nodeName),
+        OPS_LOG_E(nodeName, "param shape of input tensor is invalid"), return false);
 
-    OP_TILING_CHECK(!CheckOptionalInputTensorDim(context, nodeName),
-        OP_LOGE(nodeName, "param shape of optional input tensor is invalid"), return false);
+    OPS_CHECK(!CheckOptionalInputTensorDim(context, nodeName),
+        OPS_LOG_E(nodeName, "param shape of optional input tensor is invalid"), return false);
 
-    OP_TILING_CHECK(!CheckOutputTensorDim(context, nodeName),
-        OP_LOGE(nodeName, "param shape of output tensor is invalid"), return false);
+    OPS_CHECK(!CheckOutputTensorDim(context, nodeName),
+        OPS_LOG_E(nodeName, "param shape of output tensor is invalid"), return false);
 
     return true;
 }
@@ -258,26 +258,26 @@ static bool CheckTensorDim(gert::TilingContext *context, const char *nodeName)
 static bool CheckTensorDataType(gert::TilingContext *context, const char *nodeName)
 {
     auto recvXDesc = context->GetInputDesc(RECV_X_INDEX);
-    OP_TILING_CHECK(recvXDesc == nullptr, OP_LOGE(nodeName, "recvXDesc is null."), return false);
-    OP_TILING_CHECK((recvXDesc->GetDataType() != ge::DT_BF16) && (recvXDesc->GetDataType() != ge::DT_FLOAT16),
-        OP_LOGE(nodeName, "recvX dataType is invalid, dataType should be bf16 or float16, but is "
+    OPS_CHECK(recvXDesc == nullptr, OPS_LOG_E(nodeName, "recvXDesc is null."), return false);
+    OPS_CHECK((recvXDesc->GetDataType() != ge::DT_BF16) && (recvXDesc->GetDataType() != ge::DT_FLOAT16),
+        OPS_LOG_E(nodeName, "recvX dataType is invalid, dataType should be bf16 or float16, but is "
         ), return false);
     auto tokenSrcInfoDesc = context->GetInputDesc(TOKEN_SRC_INFO_INDEX);
-    OP_TILING_CHECK(tokenSrcInfoDesc == nullptr, OP_LOGE(nodeName, "tokenSrcInfoDesc is null."), return false);
-    OP_TILING_CHECK((tokenSrcInfoDesc->GetDataType() != ge::DT_INT32), OP_LOGE(nodeName, "tokenSrcInfoForCombine dataType is invalid,"
+    OPS_CHECK(tokenSrcInfoDesc == nullptr, OPS_LOG_E(nodeName, "tokenSrcInfoDesc is null."), return false);
+    OPS_CHECK((tokenSrcInfoDesc->GetDataType() != ge::DT_INT32), OPS_LOG_E(nodeName, "tokenSrcInfoForCombine dataType is invalid,"
         " dataType should be int32, but is"), return false);
     auto tpRecvCountsDesc = context->GetOptionalInputDesc(TP_RECV_COUNTS_INDEX);
-    OP_TILING_CHECK(tpRecvCountsDesc == nullptr, OP_LOGE(nodeName, "tpRecvCountsDesc is null."), return false);
-    OP_TILING_CHECK((tpRecvCountsDesc->GetDataType() != ge::DT_INT32),
-        OP_LOGE(nodeName, "tpRecvCounts dataType is invalid, dataType should be int32, but is "), return false);
+    OPS_CHECK(tpRecvCountsDesc == nullptr, OPS_LOG_E(nodeName, "tpRecvCountsDesc is null."), return false);
+    OPS_CHECK((tpRecvCountsDesc->GetDataType() != ge::DT_INT32),
+        OPS_LOG_E(nodeName, "tpRecvCounts dataType is invalid, dataType should be int32, but is "), return false);
     auto topkWeightsDesc = context->GetInputDesc(TOPK_WEIGHTS_INDEX);
-    OP_TILING_CHECK(topkWeightsDesc == nullptr, OP_LOGE(nodeName, "topkWeightsDesc is null."), return false);
-    OP_TILING_CHECK((topkWeightsDesc->GetDataType() != ge::DT_FLOAT),
-        OP_LOGE(nodeName, "topkWeights dataType is invalid, dataType should be float, but is "),
+    OPS_CHECK(topkWeightsDesc == nullptr, OPS_LOG_E(nodeName, "topkWeightsDesc is null."), return false);
+    OPS_CHECK((topkWeightsDesc->GetDataType() != ge::DT_FLOAT),
+        OPS_LOG_E(nodeName, "topkWeights dataType is invalid, dataType should be float, but is "),
          return false);
     auto xDesc = context->GetOutputDesc(OUTPUT_X_INDEX);
-    OP_TILING_CHECK(xDesc == nullptr, OP_LOGE(nodeName, "xDesc is null."), return false);
-    OP_TILING_CHECK((xDesc->GetDataType() != recvXDesc->GetDataType()), OP_LOGE(nodeName,
+    OPS_CHECK(xDesc == nullptr, OPS_LOG_E(nodeName, "xDesc is null."), return false);
+    OPS_CHECK((xDesc->GetDataType() != recvXDesc->GetDataType()), OPS_LOG_E(nodeName,
         "x dataType is invalid, dataType should be equal to recvX dataType , but is "),
         return false);
     return true;
@@ -286,29 +286,29 @@ static bool CheckTensorDataType(gert::TilingContext *context, const char *nodeNa
 static bool CheckTensorFormat(gert::TilingContext *context, const char *nodeName)
 {
     auto recvXDesc = context->GetInputDesc(RECV_X_INDEX);
-    OP_TILING_CHECK(recvXDesc == nullptr, OP_LOGE(nodeName, "recvXDesc is null."), return false);
-    OP_TILING_CHECK(static_cast<ge::Format>(ge::GetPrimaryFormat(recvXDesc->GetStorageFormat())) ==
-        ge::FORMAT_FRACTAL_NZ, OP_LOGE(nodeName, "recvXFormat is invalid"), return false);
+    OPS_CHECK(recvXDesc == nullptr, OPS_LOG_E(nodeName, "recvXDesc is null."), return false);
+    OPS_CHECK(static_cast<ge::Format>(ge::GetPrimaryFormat(recvXDesc->GetStorageFormat())) ==
+        ge::FORMAT_FRACTAL_NZ, OPS_LOG_E(nodeName, "recvXFormat is invalid"), return false);
 
     auto tokenSrcInfoDesc = context->GetInputDesc(TOKEN_SRC_INFO_INDEX);
-    OP_TILING_CHECK(tokenSrcInfoDesc == nullptr, OP_LOGE(nodeName, "tokenSrcInfoDesc is null."), return false);
-    OP_TILING_CHECK(static_cast<ge::Format>(ge::GetPrimaryFormat(tokenSrcInfoDesc->GetStorageFormat())) ==
-        ge::FORMAT_FRACTAL_NZ, OP_LOGE(nodeName, "tokenSrcInfoFormat is invalid"), return false);
+    OPS_CHECK(tokenSrcInfoDesc == nullptr, OPS_LOG_E(nodeName, "tokenSrcInfoDesc is null."), return false);
+    OPS_CHECK(static_cast<ge::Format>(ge::GetPrimaryFormat(tokenSrcInfoDesc->GetStorageFormat())) ==
+        ge::FORMAT_FRACTAL_NZ, OPS_LOG_E(nodeName, "tokenSrcInfoFormat is invalid"), return false);
 
     auto tpRecvCountsDesc = context->GetOptionalInputDesc(TP_RECV_COUNTS_INDEX);
-    OP_TILING_CHECK(tpRecvCountsDesc == nullptr, OP_LOGE(nodeName, "tpRecvCountsDesc is null."), return false);
-    OP_TILING_CHECK(static_cast<ge::Format>(ge::GetPrimaryFormat(tpRecvCountsDesc->GetStorageFormat())) ==
-        ge::FORMAT_FRACTAL_NZ, OP_LOGE(nodeName, "tpRecvCountsFormat is invalid"), return false);
+    OPS_CHECK(tpRecvCountsDesc == nullptr, OPS_LOG_E(nodeName, "tpRecvCountsDesc is null."), return false);
+    OPS_CHECK(static_cast<ge::Format>(ge::GetPrimaryFormat(tpRecvCountsDesc->GetStorageFormat())) ==
+        ge::FORMAT_FRACTAL_NZ, OPS_LOG_E(nodeName, "tpRecvCountsFormat is invalid"), return false);
 
     auto topkWeightsDesc = context->GetInputDesc(TOPK_WEIGHTS_INDEX);
-    OP_TILING_CHECK(topkWeightsDesc == nullptr, OP_LOGE(nodeName, "topkWeightsDesc is null."), return false);
-    OP_TILING_CHECK(static_cast<ge::Format>(ge::GetPrimaryFormat(topkWeightsDesc->GetStorageFormat())) ==
-        ge::FORMAT_FRACTAL_NZ, OP_LOGE(nodeName, "topkWeightsFormat is invalid"), return false);
+    OPS_CHECK(topkWeightsDesc == nullptr, OPS_LOG_E(nodeName, "topkWeightsDesc is null."), return false);
+    OPS_CHECK(static_cast<ge::Format>(ge::GetPrimaryFormat(topkWeightsDesc->GetStorageFormat())) ==
+        ge::FORMAT_FRACTAL_NZ, OPS_LOG_E(nodeName, "topkWeightsFormat is invalid"), return false);
 
     auto xDesc = context->GetOutputDesc(OUTPUT_X_INDEX);
-    OP_TILING_CHECK(xDesc == nullptr, OP_LOGE(nodeName, "xDesc is null."), return false);
-    OP_TILING_CHECK(static_cast<ge::Format>(ge::GetPrimaryFormat(xDesc->GetStorageFormat())) == ge::FORMAT_FRACTAL_NZ,
-                    OP_LOGE(nodeName, "xFormat is invalid"), return false);
+    OPS_CHECK(xDesc == nullptr, OPS_LOG_E(nodeName, "xDesc is null."), return false);
+    OPS_CHECK(static_cast<ge::Format>(ge::GetPrimaryFormat(xDesc->GetStorageFormat())) == ge::FORMAT_FRACTAL_NZ,
+                    OPS_LOG_E(nodeName, "xFormat is invalid"), return false);
 
     return true;
 }
@@ -320,8 +320,8 @@ static bool CheckTensorShape(gert::TilingContext *context, CamMoeCombineNormalTi
     int64_t topkWeightsDim0 = topkWeightsStorageShape->GetStorageShape().GetDim(0);
     int64_t topkWeightsDim1 = topkWeightsStorageShape->GetStorageShape().GetDim(1);
     int64_t moeExpertNum = static_cast<int64_t>(tilingData.camMoeCombineNormalInfo.moeExpertNum);
-    OP_TILING_CHECK((topkWeightsDim1 <= 0) || (topkWeightsDim1 > K_MAX || (topkWeightsDim1 > moeExpertNum)),
-        OP_LOGE(nodeName, "topkWeights's dim1(K) should be in (0, min(%ld, moeExpertNum %ld)], "
+    OPS_CHECK((topkWeightsDim1 <= 0) || (topkWeightsDim1 > K_MAX || (topkWeightsDim1 > moeExpertNum)),
+        OPS_LOG_E(nodeName, "topkWeights's dim1(K) should be in (0, min(%ld, moeExpertNum %ld)], "
         "but got topkWeights's dim1=%ld.", K_MAX, moeExpertNum, topkWeightsDim1), return false);
     tilingData.camMoeCombineNormalInfo.k = static_cast<uint32_t>(topkWeightsDim1);
 
@@ -329,8 +329,8 @@ static bool CheckTensorShape(gert::TilingContext *context, CamMoeCombineNormalTi
     int64_t tpWorldSize = static_cast<int64_t>(tilingData.camMoeCombineNormalInfo.tpWorldSize);
     const gert::StorageShape *recvXStorageShape = context->GetInputShape(RECV_X_INDEX);
     int64_t recvXDim1 = recvXStorageShape->GetStorageShape().GetDim(1);
-    OP_TILING_CHECK((recvXDim1 < H_MIN) || (recvXDim1 > H_MAX),
-        OP_LOGE(nodeName, "recvX's dim1(H) should be in [%ld, %ld], but got %ld.",
+    OPS_CHECK((recvXDim1 < H_MIN) || (recvXDim1 > H_MAX),
+        OPS_LOG_E(nodeName, "recvX's dim1(H) should be in [%ld, %ld], but got %ld.",
         H_MIN, H_MAX, recvXDim1), return false); // 32-byte aligned
     tilingData.camMoeCombineNormalInfo.h = static_cast<uint32_t>(recvXDim1);
 
@@ -342,9 +342,9 @@ static bool CheckTensorShape(gert::TilingContext *context, CamMoeCombineNormalTi
     const gert::StorageShape *xStorageShape = context->GetOutputShape(OUTPUT_X_INDEX);
     int64_t xDim0 = xStorageShape->GetStorageShape().GetDim(0);
     int64_t xDim1 = xStorageShape->GetStorageShape().GetDim(1);
-    OP_TILING_CHECK(xDim0 != topkWeightsDim0, OP_LOGE(nodeName,
+    OPS_CHECK(xDim0 != topkWeightsDim0, OPS_LOG_E(nodeName,
         "x's dim0 not equal to bs, bs = %ld, x's dim0 = %ld", topkWeightsDim0, xDim0), return false);
-    OP_TILING_CHECK(xDim1 != recvXDim1, OP_LOGE(nodeName,
+    OPS_CHECK(xDim1 != recvXDim1, OPS_LOG_E(nodeName,
         "x's dim1 not equal to h, x's dim1 = %ld, h = %ld", xDim1, recvXDim1), return false);
 
     return true;
@@ -358,36 +358,36 @@ static bool CheckAttrs(gert::TilingContext *context, CamMoeCombineNormalTilingDa
     uint32_t moeExpertNum = tilingData.camMoeCombineNormalInfo.moeExpertNum;
 
     // Validate if moe expert number can be evenly distributed across multiple machines
-    OP_TILING_CHECK(moeExpertNum % epWorldSize != 0,
-        OP_LOGE(nodeName, "moeExpertNum should be divisible by epWorldSize, "
+    OPS_CHECK(moeExpertNum % epWorldSize != 0,
+        OPS_LOG_E(nodeName, "moeExpertNum should be divisible by epWorldSize, "
         "but got moeExpertNum=%d, epWorldSize=%d.", moeExpertNum, epWorldSize), return false);
     localMoeExpertNum = moeExpertNum / epWorldSize;
-    OP_TILING_CHECK(localMoeExpertNum <= 0,
-        OP_LOGE(nodeName, "localMoeExpertNum is invalid, localMoeExpertNum = %d", localMoeExpertNum), return false);
+    OPS_CHECK(localMoeExpertNum <= 0,
+        OPS_LOG_E(nodeName, "localMoeExpertNum is invalid, localMoeExpertNum = %d", localMoeExpertNum), return false);
     // Validate if expert number per card equals 1 when tp=2
-    OP_TILING_CHECK((localMoeExpertNum > 1) && (tpWorldSize > 1),
-        OP_LOGE(nodeName, "Cannot support multi-moeExpert %d in a rank when tpWorldSize = %d > 1",
+    OPS_CHECK((localMoeExpertNum > 1) && (tpWorldSize > 1),
+        OPS_LOG_E(nodeName, "Cannot support multi-moeExpert %d in a rank when tpWorldSize = %d > 1",
         localMoeExpertNum, tpWorldSize), return false);
     tilingData.camMoeCombineNormalInfo.moeExpertPerRankNum = localMoeExpertNum;
 
     // Validate topkWeights dimension 0 and set bs
     const gert::StorageShape *topkWeightsStorageShape = context->GetInputShape(TOPK_WEIGHTS_INDEX);
     int64_t topkWeightsDim0 = topkWeightsStorageShape->GetStorageShape().GetDim(0);
-    OP_TILING_CHECK((topkWeightsDim0 <= 0) || (topkWeightsDim0 > BS_UPPER_BOUND),
-        OP_LOGE(nodeName, "Invalid topkWeights dims0(BS) %ld. Should be between [1, %ld].",
+    OPS_CHECK((topkWeightsDim0 <= 0) || (topkWeightsDim0 > BS_UPPER_BOUND),
+        OPS_LOG_E(nodeName, "Invalid topkWeights dims0(BS) %ld. Should be between [1, %ld].",
         topkWeightsDim0, BS_UPPER_BOUND), return false);
     tilingData.camMoeCombineNormalInfo.bs = static_cast<uint32_t>(topkWeightsDim0);
 
     // Validate globalBS
     auto attrs = context->GetAttrs();
-    OP_TILING_CHECK(attrs == nullptr, OP_LOGE(nodeName, "attrs is null."), return false);
+    OPS_CHECK(attrs == nullptr, OPS_LOG_E(nodeName, "attrs is null."), return false);
     auto globalBsPtr = attrs->GetAttrPointer<int64_t>(ATTR_GLOBAL_BS_INDEX);
-    OP_TILING_CHECK(globalBsPtr == nullptr, OP_LOGE(nodeName, "globalBs is null."), return false);
-    OP_LOGD(nodeName, "CamMoeCombineNormal *globalBsPtr = %ld, bs = %ld, epWorldSize = %u\n",
+    OPS_CHECK(globalBsPtr == nullptr, OPS_LOG_E(nodeName, "globalBs is null."), return false);
+    OPS_LOG_D(nodeName, "CamMoeCombineNormal *globalBsPtr = %ld, bs = %ld, epWorldSize = %u\n",
         *globalBsPtr, topkWeightsDim0, epWorldSize);
 
-    OP_TILING_CHECK((*globalBsPtr != 0) && ((*globalBsPtr < static_cast<int64_t>(epWorldSize) * topkWeightsDim0) ||
-        ((*globalBsPtr) % (static_cast<int64_t>(epWorldSize)) != 0)), OP_LOGE(nodeName, "globalBS is invalid, only "
+    OPS_CHECK((*globalBsPtr != 0) && ((*globalBsPtr < static_cast<int64_t>(epWorldSize) * topkWeightsDim0) ||
+        ((*globalBsPtr) % (static_cast<int64_t>(epWorldSize)) != 0)), OPS_LOG_E(nodeName, "globalBS is invalid, only "
         "support 0 or maxBs(maxBs is the largest bs on all ranks) * epWorldSize, but got globalBS=%ld, "
         "bs=%ld, epWorldSize=%u.", *globalBsPtr, topkWeightsDim0, epWorldSize),  return false);
 
@@ -402,24 +402,24 @@ static bool CheckAttrs(gert::TilingContext *context, CamMoeCombineNormalTilingDa
 static ge::graphStatus TilingCheckCamMoeCombineNormal(gert::TilingContext *context, const char *nodeName)
 {
     // Check parameter shape information
-    OP_TILING_CHECK(!CheckTensorDim(context, nodeName),
-                    OP_LOGE(nodeName, "param shape is invalid"), return ge::GRAPH_FAILED);
+    OPS_CHECK(!CheckTensorDim(context, nodeName),
+                    OPS_LOG_E(nodeName, "param shape is invalid"), return ge::GRAPH_FAILED);
     // Check parameter dataType information
-    OP_TILING_CHECK(!CheckTensorDataType(context, nodeName),
-                    OP_LOGE(nodeName, "param dataType is invalid"), return ge::GRAPH_FAILED);
+    OPS_CHECK(!CheckTensorDataType(context, nodeName),
+                    OPS_LOG_E(nodeName, "param dataType is invalid"), return ge::GRAPH_FAILED);
     // Check parameter format information
-    OP_TILING_CHECK(!CheckTensorFormat(context, nodeName),
-                    OP_LOGE(nodeName, "param Format is invalid"), return ge::GRAPH_FAILED);
+    OPS_CHECK(!CheckTensorFormat(context, nodeName),
+                    OPS_LOG_E(nodeName, "param Format is invalid"), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
 static ge::graphStatus SetWorkspace(gert::TilingContext *context, const char *nodeName)
 {
     size_t *workspace = context->GetWorkspaceSizes(1);
-    OP_TILING_CHECK(workspace == nullptr, VECTOR_INNER_ERR_REPORT_TILIING(nodeName, "get workspace failed"),
+    OPS_CHECK(workspace == nullptr, OPS_LOG_E(nodeName, "get workspace failed"),
         return ge::GRAPH_FAILED);
     workspace[0] = SYSTEM_NEED_WORKSPACE;
-    OP_LOGD(nodeName, "workspce[0] size is %ld", workspace[0]);
+    OPS_LOG_D(nodeName, "workspce[0] size is %ld", workspace[0]);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -428,7 +428,7 @@ static void SetHCommCfg(gert::TilingContext *context, CamMoeCombineNormalTilingD
     const std::string groupEp, const std::string groupTp)
 {
     const char* nodeName = context->GetNodeName();
-    OP_LOGD(nodeName, "CamMoeCombineNormal groupEp = %s, groupTp = %s", groupEp.c_str(), groupTp.c_str());
+    OPS_LOG_D(nodeName, "CamMoeCombineNormal groupEp = %s, groupTp = %s", groupEp.c_str(), groupTp.c_str());
     uint32_t opType1 = OP_TYPE_ALL_TO_ALL;
     uint32_t opType2 = OP_TYPE_REDUCE_SCATTER;
     std::string algConfigAllToAllStr = "AlltoAll=level0:fullmesh;level1:pairwise";
@@ -447,30 +447,30 @@ static void SetHCommCfg(gert::TilingContext *context, CamMoeCombineNormalTilingD
 static ge::graphStatus CamMoeCombineNormalA3TilingFuncImpl(gert::TilingContext* context)
 {
     const char *nodeName = context->GetNodeName();
-    OP_LOGD(nodeName, "Enter CamMoeCombineNormal Tiling func");
+    OPS_LOG_D(nodeName, "Enter CamMoeCombineNormal Tiling func");
     CamMoeCombineNormalTilingData *tilingData = context->GetTilingData<CamMoeCombineNormalTilingData>();
-    OP_TILING_CHECK(tilingData == nullptr, OP_LOGE(nodeName, "tilingData is nullptr."), return ge::GRAPH_FAILED);
+    OPS_CHECK(tilingData == nullptr, OPS_LOG_E(nodeName, "tilingData is nullptr."), return ge::GRAPH_FAILED);
     std::string groupEp = "";
     std::string groupTp = "";
     uint32_t localMoeExpertNum = 1;
 
     // Get input parameter attributes
-    OP_TILING_CHECK(GetAttrAndSetTilingData(context, *tilingData, nodeName, groupEp, groupTp) == ge::GRAPH_FAILED,
-        OP_LOGE(nodeName, "Getting attr failed."), return ge::GRAPH_FAILED);
+    OPS_CHECK(GetAttrAndSetTilingData(context, *tilingData, nodeName, groupEp, groupTp) == ge::GRAPH_FAILED,
+        OPS_LOG_E(nodeName, "Getting attr failed."), return ge::GRAPH_FAILED);
 
     // Check input/output dim, format, dataType
-    OP_TILING_CHECK(TilingCheckCamMoeCombineNormal(context, nodeName) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(nodeName, "Tiling check params failed"), return ge::GRAPH_FAILED);
+    OPS_CHECK(TilingCheckCamMoeCombineNormal(context, nodeName) != ge::GRAPH_SUCCESS,
+                    OPS_LOG_E(nodeName, "Tiling check params failed"), return ge::GRAPH_FAILED);
 
     // Check if attribute values are valid
-    OP_TILING_CHECK(!CheckAttrs(context, *tilingData, nodeName, localMoeExpertNum),
-        OP_LOGE(nodeName, "attr check failed."), return ge::GRAPH_FAILED);
+    OPS_CHECK(!CheckAttrs(context, *tilingData, nodeName, localMoeExpertNum),
+        OPS_LOG_E(nodeName, "attr check failed."), return ge::GRAPH_FAILED);
 
     uint32_t epRankId = tilingData->camMoeCombineNormalInfo.epRankId;
 
     // Check shape dimensions and assign h, k
-    OP_TILING_CHECK(!CheckTensorShape(context, *tilingData, nodeName, localMoeExpertNum),
-        OP_LOGE(nodeName, "param dim check failed."), return ge::GRAPH_FAILED);
+    OPS_CHECK(!CheckTensorShape(context, *tilingData, nodeName, localMoeExpertNum),
+        OPS_LOG_E(nodeName, "param dim check failed."), return ge::GRAPH_FAILED);
 
     // Validate win area size
     uint64_t maxWindowSize = Mc2TilingUtils::GetMaxWindowSize();
@@ -485,8 +485,8 @@ static ge::graphStatus CamMoeCombineNormalA3TilingFuncImpl(gert::TilingContext* 
     uint64_t tokenNeedSizeDispatch = ((tokenActualLen + WIN_ADDR_ALIGN - 1UL) / WIN_ADDR_ALIGN) * WIN_ADDR_ALIGN;
     uint64_t actualSize = (maxBs * k * (tokenNeedSizeCombine + tokenNeedSizeDispatch) + COMBINE_STATE_WIN_OFFSET) * 
                            DOUBLE_DATA_BUFFER;
-    OP_TILING_CHECK((actualSize > maxWindowSize),
-        OP_LOGE(nodeName, "HCCL_BUFFSIZE is too SMALL, maxBs = %lu, h = %lu, epWorldSize = %lu, localMoeExpertNum = %u,"
+    OPS_CHECK((actualSize > maxWindowSize),
+        OPS_LOG_E(nodeName, "HCCL_BUFFSIZE is too SMALL, maxBs = %lu, h = %lu, epWorldSize = %lu, localMoeExpertNum = %u,"
             " tokenNeedSizeDispatch = %lu, tokenNeedSizeCombine = %lu, k = %lu, NEEDED_HCCL_BUFFSIZE("
             "((maxBs * tokenNeedSizeDispatch) + (maxBs * tokenNeedSizeCombine * k) + 3MB) * 2) = %luMB, HCCL_BUFFSIZE=%luMB.",
             maxBs, h, epWorldSize, localMoeExpertNum, tokenNeedSizeDispatch, tokenNeedSizeCombine, k,
@@ -494,8 +494,8 @@ static ge::graphStatus CamMoeCombineNormalA3TilingFuncImpl(gert::TilingContext* 
         return ge::GRAPH_FAILED);
     tilingData->camMoeCombineNormalInfo.totalWinSize = maxWindowSize;
 
-    OP_TILING_CHECK(SetWorkspace(context, nodeName) != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "Tiling set workspace Failed"),
+    OPS_CHECK(SetWorkspace(context, nodeName) != ge::GRAPH_SUCCESS,
+                    OPS_LOG_E(context->GetNodeName(), "Tiling set workspace Failed"),
                     return ge::GRAPH_FAILED);
 
     SetHCommCfg(context, tilingData, groupEp, groupTp);
@@ -512,7 +512,7 @@ static ge::graphStatus CamMoeCombineNormalA3TilingFuncImpl(gert::TilingContext* 
     tilingData->camMoeCombineNormalInfo.aivNum = aivNum;
     tilingData->camMoeCombineNormalInfo.totalUbSize = ubSize;
     context->SetScheduleMode(1); // Set to batch mode, all cores start simultaneously
-    OP_LOGD(nodeName, "blockdim = %u, aivNum = %lu, ubsize = %lu", blockDim, aivNum, ubSize);
+    OPS_LOG_D(nodeName, "blockdim = %u, aivNum = %lu, ubsize = %lu", blockDim, aivNum, ubSize);
     PrintTilingDataInfo(nodeName, *tilingData);
 
     return ge::GRAPH_SUCCESS;
@@ -523,10 +523,10 @@ static ge::graphStatus CamMoeCombineNormalTilingFunc(gert::TilingContext* contex
     // recvX data type int32 is not supported
     auto recvXDesc = context->GetInputDesc(RECV_X_INDEX);
     const char *nodeName = context->GetNodeName();
-    OP_TILING_CHECK(recvXDesc == nullptr, OP_LOGE(nodeName, "recvXDesc is null."), return ge::GRAPH_FAILED);
+    OPS_CHECK(recvXDesc == nullptr, OPS_LOG_E(nodeName, "recvXDesc is null."), return ge::GRAPH_FAILED);
     // Check if recvX data type is DT_INT32
-    OP_TILING_CHECK((recvXDesc->GetDataType() == ge::DT_INT32),
-                    OP_LOGE(nodeName, "recvX dataType is invalid, dataType should be bf16 or float16, but is "),
+    OPS_CHECK((recvXDesc->GetDataType() == ge::DT_INT32),
+                    OPS_LOG_E(nodeName, "recvX dataType is invalid, dataType should be bf16 or float16, but is "),
                      return ge::GRAPH_FAILED);
 
     ge::graphStatus ret = CamMoeCombineNormalA3TilingFuncImpl(context);
