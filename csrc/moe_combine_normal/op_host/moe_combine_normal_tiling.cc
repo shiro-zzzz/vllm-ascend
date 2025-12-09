@@ -74,7 +74,7 @@ using CommQuantModeType = std::underlying_type<CommQuantMode>;
 
 namespace optiling {
 
-// a3专有
+// A3 specific
 static void PrintTilingDataInfo(const char *nodeName, MoeCombineNormalTilingData &tilingData)
 {
     OPS_LOG_D(nodeName, "epWorldSize is %u.", tilingData.moeCombineNormalInfo.epWorldSize);
@@ -107,7 +107,7 @@ static ge::graphStatus GetAttrAndSetTilingData(gert::TilingContext *context, Moe
     auto tpRankIdPtr = attrs->GetAttrPointer<int64_t>(ATTR_TP_RANK_ID_INDEX);
     auto moeExpertNumPtr = attrs->GetAttrPointer<int64_t>(ATTR_MOE_EXPERT_NUM_INDEX);
 
-    // 判空
+    // Check for null pointers
     OPS_CHECK((groupEpPtr == nullptr) || (strnlen(groupEpPtr, MAX_GROUP_NAME_LENGTH) == 0) ||
                         (strnlen(groupEpPtr, MAX_GROUP_NAME_LENGTH) == MAX_GROUP_NAME_LENGTH),
                     OPS_LOG_E(nodeName, "groupEp is invalid."), return ge::GRAPH_FAILED);
@@ -117,7 +117,7 @@ static ge::graphStatus GetAttrAndSetTilingData(gert::TilingContext *context, Moe
     OPS_CHECK(tpRankIdPtr == nullptr, OPS_LOG_E(nodeName, "tpRankId is null."), return ge::GRAPH_FAILED);
     OPS_CHECK(moeExpertNumPtr == nullptr, OPS_LOG_E(nodeName, "moeExpertNum is null."), return ge::GRAPH_FAILED);
 
-    // 判断是否满足uint32_t及其他限制
+    // Check if values meet uint32_t and other constraints
     int64_t moeExpertNum = *moeExpertNumPtr;
     int64_t epWorldSize = *epWorldSizePtr;
     OPS_CHECK((epWorldSize < MIN_EP_WORLD_SIZE) || (epWorldSize > MAX_EP_WORLD_SIZE),
@@ -253,7 +253,7 @@ static bool CheckTensorDim(gert::TilingContext *context, const char *nodeName, c
     return true;
 }
 
-// 校验数据类型
+// Validate data types
 static bool CheckTensorDataType(gert::TilingContext *context, const char *nodeName, const bool isEnableDiagnose)
 {
     auto recvXDesc = context->GetInputDesc(RECV_X_INDEX);
@@ -353,20 +353,20 @@ static bool CheckTensorShape(gert::TilingContext *context, MoeCombineNormalTilin
                     return false);
     tilingData.moeCombineNormalInfo.k = static_cast<uint32_t>(topkWeightsDim1);
 
-    // 校验recvX的维度并设h
+    // Validate recvX dimensions and set h
     int64_t tpWorldSize = static_cast<int64_t>(tilingData.moeCombineNormalInfo.tpWorldSize);
     const gert::StorageShape *recvXStorageShape = context->GetInputShape(RECV_X_INDEX);
     int64_t recvXDim1 = recvXStorageShape->GetStorageShape().GetDim(1);
     OPS_CHECK((recvXDim1 < H_MIN) || (recvXDim1 > H_MAX),
                     OPS_LOG_E(nodeName, "recvX's dim1(H) should be in [%ld, %ld], but got %ld.", H_MIN, H_MAX, recvXDim1),
-                    return false);  // 32对齐
+                    return false);  // 32-byte aligned
     tilingData.moeCombineNormalInfo.h = static_cast<uint32_t>(recvXDim1);
 
-    // 校验epRecvCount和tpRecvCount的维度
+    // Validate dimensions of epRecvCount and tpRecvCount
     int64_t epWorldSize = static_cast<int64_t>(tilingData.moeCombineNormalInfo.epWorldSize);
     int64_t moeExpertPerRankNum = static_cast<int64_t>(tilingData.moeCombineNormalInfo.moeExpertPerRankNum);
 
-    // 校验x的维度
+    // Validate dimensions of x
     const gert::StorageShape *xStorageShape = context->GetOutputShape(OUTPUT_X_INDEX);
     int64_t xDim0 = xStorageShape->GetStorageShape().GetDim(0);
     int64_t xDim1 = xStorageShape->GetStorageShape().GetDim(1);
@@ -387,7 +387,7 @@ static bool CheckAttrs(gert::TilingContext *context, MoeCombineNormalTilingData 
     uint32_t tpWorldSize = tilingData.moeCombineNormalInfo.tpWorldSize;
     uint32_t moeExpertNum = tilingData.moeCombineNormalInfo.moeExpertNum;
 
-    // 校验moe专家数量能否均分给多机
+    // Check if moe expert count can be evenly divided among multiple nodes
     OPS_CHECK(moeExpertNum % epWorldSize != 0,
                     OPS_LOG_E(nodeName,
                             "moeExpertNum should be divisible by epWorldSize, "
@@ -398,14 +398,14 @@ static bool CheckAttrs(gert::TilingContext *context, MoeCombineNormalTilingData 
     OPS_CHECK(localMoeExpertNum <= 0,
                     OPS_LOG_E(nodeName, "localMoeExpertNum is invalid, localMoeExpertNum = %d", localMoeExpertNum),
                     return false);
-    // 校验tp=2时单个moe卡上专家数是否等于1
+    // Check if the number of experts on a single moe card is 1 when tp=2
     OPS_CHECK((localMoeExpertNum > 1) && (tpWorldSize > 1),
                     OPS_LOG_E(nodeName, "Cannot support multi-moeExpert %d in a rank when tpWorldSize = %d > 1",
                             localMoeExpertNum, tpWorldSize),
                     return false);
     tilingData.moeCombineNormalInfo.moeExpertPerRankNum = localMoeExpertNum;
 
-    // 校验输入topkWeights的维度0并设bs
+    // Validate dimension 0 of input topkWeights and set bs
     const gert::StorageShape *topkWeightsStorageShape = context->GetInputShape(TOPK_WEIGHTS_INDEX);
     int64_t topkWeightsDim0 = topkWeightsStorageShape->GetStorageShape().GetDim(0);
     OPS_CHECK((topkWeightsDim0 <= 0) || (topkWeightsDim0 > BS_UPPER_BOUND),
@@ -414,7 +414,7 @@ static bool CheckAttrs(gert::TilingContext *context, MoeCombineNormalTilingData 
                     return false);
     tilingData.moeCombineNormalInfo.bs = static_cast<uint32_t>(topkWeightsDim0);
 
-    // 校验globalBS
+    // Validate globalBS
     auto attrs = context->GetAttrs();
     OPS_CHECK(attrs == nullptr, OPS_LOG_E(nodeName, "attrs is null."), return false);
     auto globalBsPtr = attrs->GetAttrPointer<int64_t>(ATTR_GLOBAL_BS_INDEX);
@@ -443,13 +443,13 @@ static bool CheckAttrs(gert::TilingContext *context, MoeCombineNormalTilingData 
 static ge::graphStatus TilingCheckMoeCombineNormal(gert::TilingContext *context, const char *nodeName,
                                                       const bool isEnableDiagnose)
 {
-    // 检查参数shape信息
+    // Check parameter shape information
     OPS_CHECK(!CheckTensorDim(context, nodeName, isEnableDiagnose), OPS_LOG_E(nodeName, "param shape is invalid"),
                     return ge::GRAPH_FAILED);
-    // 检查参数dataType信息
+    // Check parameter dataType information
     OPS_CHECK(!CheckTensorDataType(context, nodeName, isEnableDiagnose),
                     OPS_LOG_E(nodeName, "param dataType is invalid"), return ge::GRAPH_FAILED);
-    // 检查参数format信息
+    // Check parameter format information
     OPS_CHECK(!CheckTensorFormat(context, nodeName, isEnableDiagnose),
                     OPS_LOG_E(nodeName, "param Format is invalid"), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
@@ -495,34 +495,34 @@ static ge::graphStatus MoeCombineNormalA3TilingFuncImpl(gert::TilingContext *con
     std::string groupTp = "";
     uint32_t localMoeExpertNum = 1;
 
-    // 获取入参属性
+    // Get input parameter attributes
     OPS_CHECK(GetAttrAndSetTilingData(context, *tilingData, nodeName, groupEp, groupTp) == ge::GRAPH_FAILED,
                     OPS_LOG_E(nodeName, "Getting attr failed."), return ge::GRAPH_FAILED);
 
     auto sendCostStatsStorageShape = context->GetOutputShape(OUTPUT_SEND_COST_INDEX);
     bool isEnableDiagnose = (sendCostStatsStorageShape != nullptr);
     tilingData->moeCombineNormalInfo.isEnableDiagnose = isEnableDiagnose;
-    // 检查输入输出的dim、format、dataType
+    // Check dim, format, dataType of inputs and outputs
     OPS_CHECK(TilingCheckMoeCombineNormal(context, nodeName, isEnableDiagnose) != ge::GRAPH_SUCCESS,
                     OPS_LOG_E(nodeName, "Tiling check params failed"), return ge::GRAPH_FAILED);
 
-    // 检查属性的取值是否合法
+    // Check if attribute values are valid
     OPS_CHECK(!CheckAttrs(context, *tilingData, nodeName, localMoeExpertNum),
                     OPS_LOG_E(nodeName, "attr check failed."), return ge::GRAPH_FAILED);
 
     uint32_t epRankId = tilingData->moeCombineNormalInfo.epRankId;
 
-    // 检查shape各维度并赋值h,k
+    // Check shape dimensions and assign h,k
     OPS_CHECK(!CheckTensorShape(context, *tilingData, nodeName, localMoeExpertNum),
                     OPS_LOG_E(nodeName, "param dim check failed."), return ge::GRAPH_FAILED);
 
-    // 校验win区大小
+    // Validate win area size
     uint64_t maxWindowSize = Mc2TilingUtils::GetMaxWindowSize();
     uint64_t h = static_cast<uint64_t>(tilingData->moeCombineNormalInfo.h);
     uint64_t epWorldSize = static_cast<uint64_t>(tilingData->moeCombineNormalInfo.epWorldSize);
     uint64_t k = static_cast<uint64_t>(tilingData->moeCombineNormalInfo.k);
     uint64_t maxBs = static_cast<uint64_t>(tilingData->moeCombineNormalInfo.globalBs) / epWorldSize;
-    // combine数据区 token首地址对齐512
+    // combine data area token head address aligned to 512
     uint64_t tokenNeedSizeCombine = ((h * MAX_OUT_DTYPE_SIZE + WIN_ADDR_ALIGN - 1UL) / WIN_ADDR_ALIGN) * WIN_ADDR_ALIGN;
     uint64_t actualSize =
         (maxBs * k * tokenNeedSizeCombine + COMBINE_STATE_WIN_OFFSET + NOTIFY_DISPATCH_WIN_OFFSET) * DOUBLE_DATA_BUFFER;
@@ -555,7 +555,7 @@ static ge::graphStatus MoeCombineNormalA3TilingFuncImpl(gert::TilingContext *con
     context->SetBlockDim(blockDim);
     tilingData->moeCombineNormalInfo.aivNum = aivNum;
     tilingData->moeCombineNormalInfo.totalUbSize = ubSize;
-    context->SetScheduleMode(1);  // 设置为batch mode模式，所有核同时启动
+    context->SetScheduleMode(1);  // Set to batch mode, all cores start simultaneously
     OPS_LOG_D(nodeName, "blockdim = %u, aivNum = %lu, ubsize = %lu", blockDim, aivNum, ubSize);
     PrintTilingDataInfo(nodeName, *tilingData);
 
@@ -564,11 +564,11 @@ static ge::graphStatus MoeCombineNormalA3TilingFuncImpl(gert::TilingContext *con
 
 static ge::graphStatus MoeCombineNormalTilingFunc(gert::TilingContext *context)
 {
-    // 不支持 recvX数据类型为int32 type
+    // Does not support recvX data type as int32 type
     auto recvXDesc = context->GetInputDesc(RECV_X_INDEX);
     const char *nodeName = context->GetNodeName();
     OPS_CHECK(recvXDesc == nullptr, OPS_LOG_E(nodeName, "recvXDesc is null."), return ge::GRAPH_FAILED);
-    // 检查recvX数据类型为DT_INT32
+    // Check if recvX data type is DT_INT32
     OPS_CHECK((recvXDesc->GetDataType() == ge::DT_INT32),
                     OPS_LOG_E(nodeName, "recvX dataType is invalid, dataType should be bf16 or float16, but is "),
                     return ge::GRAPH_FAILED);

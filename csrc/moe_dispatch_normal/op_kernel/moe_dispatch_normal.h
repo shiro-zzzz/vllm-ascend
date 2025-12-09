@@ -526,7 +526,7 @@ __aicore__ inline void MoeDispatchNormal<TemplateTypeFunc>::WaitStatus()
         waitRecvCostStatsOutQueue.FreeTensor<int32_t>(waitRecvCostStatsTensor);
     }
 
-    // 清状态
+    // Clean status
     SyncFunc<AscendC::HardEvent::MTE3_S>();
     DataCopyParams intriOutParams{static_cast<uint16_t>(statusNumPerCore), 1, 0, 0};
     uint64_t duplicateMask[2] = {0x101010101010101, 0};
