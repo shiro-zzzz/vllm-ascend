@@ -1,5 +1,5 @@
-#ifndef ACLNN_CAM_MOE_COMBINE_NORMAL_H_
-#define ACLNN_CAM_MOE_COMBINE_NORMAL_H_
+#ifndef ACLNN_MOE_COMBINE_NORMAL_H_
+#define ACLNN_MOE_COMBINE_NORMAL_H_
 
 #include "aclnn/acl_meta.h"
 
@@ -25,7 +25,7 @@ extern "C" {
  * workspaceSize : size of workspace(output).
  * executor : executor context(output).
  */
-__attribute__((visibility("default"))) aclnnStatus aclnnCamMoeCombineNormalGetWorkspaceSize(
+__attribute__((visibility("default"))) aclnnStatus aclnnMoeCombineNormalGetWorkspaceSize(
     const aclTensor *recvX, const aclTensor *tokenSrcInfo, const aclTensor *epRecvCounts,
     const aclTensor *recvTopkWeights, const aclTensor *tpRecvCountsOptional, char *epGroupName, int64_t epWorldSize,
     int64_t epRankId, char *tpGroupNameOptional, int64_t tpWorldSize, int64_t tpRankId, int64_t moeExpertNum,
@@ -38,7 +38,7 @@ __attribute__((visibility("default"))) aclnnStatus aclnnCamMoeCombineNormalGetWo
  * executor : executor context(input).
  * stream : acl stream.
  */
-__attribute__((visibility("default"))) aclnnStatus aclnnCamMoeCombineNormal(void *workspace, uint64_t workspaceSize,
+__attribute__((visibility("default"))) aclnnStatus aclnnMoeCombineNormal(void *workspace, uint64_t workspaceSize,
                                                                             aclOpExecutor *executor,
                                                                             aclrtStream stream);
 

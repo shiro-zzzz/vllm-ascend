@@ -18,7 +18,7 @@
 #include "log/ops_log.h"
 #include "graph/utils/type_utils.h"
 #include "register/op_def_registry.h"
-#include "../op_kernel/cam_moe_combine_normal_tiling.h"
+#include "../op_kernel/moe_combine_normal_tiling.h"
 
 using namespace AscendC;
 using namespace ge;
@@ -95,25 +95,25 @@ using CommQuantModeType = std::underlying_type<CommQuantMode>;
 namespace optiling {
 
 // a3专有
-static void PrintTilingDataInfo(const char *nodeName, CamMoeCombineNormalTilingData &tilingData)
+static void PrintTilingDataInfo(const char *nodeName, MoeCombineNormalTilingData &tilingData)
 {
-    OPS_LOG_D(nodeName, "epWorldSize is %u.", tilingData.camMoeCombineNormalInfo.epWorldSize);
-    OPS_LOG_D(nodeName, "tpWorldSize is %u.", tilingData.camMoeCombineNormalInfo.tpWorldSize);
-    OPS_LOG_D(nodeName, "epRankId is %u.", tilingData.camMoeCombineNormalInfo.epRankId);
-    OPS_LOG_D(nodeName, "tpRankId is %u.", tilingData.camMoeCombineNormalInfo.tpRankId);
-    OPS_LOG_D(nodeName, "expertShardType is %u.", tilingData.camMoeCombineNormalInfo.expertShardType);
-    OPS_LOG_D(nodeName, "moeExpertNum is %u.", tilingData.camMoeCombineNormalInfo.moeExpertNum);
-    OPS_LOG_D(nodeName, "moeExpertPerRankNum is %u.", tilingData.camMoeCombineNormalInfo.moeExpertPerRankNum);
-    OPS_LOG_D(nodeName, "globalBs is %u.", tilingData.camMoeCombineNormalInfo.globalBs);
-    OPS_LOG_D(nodeName, "bs is %u.", tilingData.camMoeCombineNormalInfo.bs);
-    OPS_LOG_D(nodeName, "k is %u.", tilingData.camMoeCombineNormalInfo.k);
-    OPS_LOG_D(nodeName, "h is %u.", tilingData.camMoeCombineNormalInfo.h);
-    OPS_LOG_D(nodeName, "aivNum is %u.", tilingData.camMoeCombineNormalInfo.aivNum);
-    OPS_LOG_D(nodeName, "totalUbSize is %lu.", tilingData.camMoeCombineNormalInfo.totalUbSize);
-    OPS_LOG_D(nodeName, "totalWinSize is %lu.", tilingData.camMoeCombineNormalInfo.totalWinSize);
+    OPS_LOG_D(nodeName, "epWorldSize is %u.", tilingData.moeCombineNormalInfo.epWorldSize);
+    OPS_LOG_D(nodeName, "tpWorldSize is %u.", tilingData.moeCombineNormalInfo.tpWorldSize);
+    OPS_LOG_D(nodeName, "epRankId is %u.", tilingData.moeCombineNormalInfo.epRankId);
+    OPS_LOG_D(nodeName, "tpRankId is %u.", tilingData.moeCombineNormalInfo.tpRankId);
+    OPS_LOG_D(nodeName, "expertShardType is %u.", tilingData.moeCombineNormalInfo.expertShardType);
+    OPS_LOG_D(nodeName, "moeExpertNum is %u.", tilingData.moeCombineNormalInfo.moeExpertNum);
+    OPS_LOG_D(nodeName, "moeExpertPerRankNum is %u.", tilingData.moeCombineNormalInfo.moeExpertPerRankNum);
+    OPS_LOG_D(nodeName, "globalBs is %u.", tilingData.moeCombineNormalInfo.globalBs);
+    OPS_LOG_D(nodeName, "bs is %u.", tilingData.moeCombineNormalInfo.bs);
+    OPS_LOG_D(nodeName, "k is %u.", tilingData.moeCombineNormalInfo.k);
+    OPS_LOG_D(nodeName, "h is %u.", tilingData.moeCombineNormalInfo.h);
+    OPS_LOG_D(nodeName, "aivNum is %u.", tilingData.moeCombineNormalInfo.aivNum);
+    OPS_LOG_D(nodeName, "totalUbSize is %lu.", tilingData.moeCombineNormalInfo.totalUbSize);
+    OPS_LOG_D(nodeName, "totalWinSize is %lu.", tilingData.moeCombineNormalInfo.totalWinSize);
 }
 
-static ge::graphStatus GetAttrAndSetTilingData(gert::TilingContext *context, CamMoeCombineNormalTilingData &tilingData,
+static ge::graphStatus GetAttrAndSetTilingData(gert::TilingContext *context, MoeCombineNormalTilingData &tilingData,
                                                const char *nodeName, std::string &groupEp, std::string &groupTp)
 {
     auto attrs = context->GetAttrs();
@@ -182,11 +182,11 @@ static ge::graphStatus GetAttrAndSetTilingData(gert::TilingContext *context, Cam
                     return ge::GRAPH_FAILED);
 
     groupEp = std::string(groupEpPtr);
-    tilingData.camMoeCombineNormalInfo.epWorldSize = static_cast<uint32_t>(epWorldSize);
-    tilingData.camMoeCombineNormalInfo.tpWorldSize = static_cast<uint32_t>(*tpWorldSizePtr);
-    tilingData.camMoeCombineNormalInfo.epRankId = static_cast<uint32_t>(*epRankIdPtr);
-    tilingData.camMoeCombineNormalInfo.tpRankId = static_cast<uint32_t>(*tpRankIdPtr);
-    tilingData.camMoeCombineNormalInfo.moeExpertNum = static_cast<uint32_t>(moeExpertNum);
+    tilingData.moeCombineNormalInfo.epWorldSize = static_cast<uint32_t>(epWorldSize);
+    tilingData.moeCombineNormalInfo.tpWorldSize = static_cast<uint32_t>(*tpWorldSizePtr);
+    tilingData.moeCombineNormalInfo.epRankId = static_cast<uint32_t>(*epRankIdPtr);
+    tilingData.moeCombineNormalInfo.tpRankId = static_cast<uint32_t>(*tpRankIdPtr);
+    tilingData.moeCombineNormalInfo.moeExpertNum = static_cast<uint32_t>(moeExpertNum);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -358,33 +358,33 @@ static bool CheckTensorFormat(gert::TilingContext *context, const char *nodeName
     return true;
 }
 
-static bool CheckTensorShape(gert::TilingContext *context, CamMoeCombineNormalTilingData &tilingData,
+static bool CheckTensorShape(gert::TilingContext *context, MoeCombineNormalTilingData &tilingData,
                              const char *nodeName, uint32_t localExpertNum)
 {
     const gert::StorageShape *topkWeightsStorageShape = context->GetInputShape(TOPK_WEIGHTS_INDEX);
     int64_t topkWeightsDim0 = topkWeightsStorageShape->GetStorageShape().GetDim(0);
     int64_t topkWeightsDim1 = topkWeightsStorageShape->GetStorageShape().GetDim(1);
-    int64_t moeExpertNum = static_cast<int64_t>(tilingData.camMoeCombineNormalInfo.moeExpertNum);
+    int64_t moeExpertNum = static_cast<int64_t>(tilingData.moeCombineNormalInfo.moeExpertNum);
     OPS_CHECK((topkWeightsDim1 <= 0) || (topkWeightsDim1 > K_MAX || (topkWeightsDim1 > moeExpertNum)),
                     OPS_LOG_E(nodeName,
                             "topkWeights's dim1(K) should be in (0, min(%ld, moeExpertNum %ld)], "
                             "but got topkWeights's dim1=%ld.",
                             K_MAX, moeExpertNum, topkWeightsDim1),
                     return false);
-    tilingData.camMoeCombineNormalInfo.k = static_cast<uint32_t>(topkWeightsDim1);
+    tilingData.moeCombineNormalInfo.k = static_cast<uint32_t>(topkWeightsDim1);
 
     // 校验recvX的维度并设h
-    int64_t tpWorldSize = static_cast<int64_t>(tilingData.camMoeCombineNormalInfo.tpWorldSize);
+    int64_t tpWorldSize = static_cast<int64_t>(tilingData.moeCombineNormalInfo.tpWorldSize);
     const gert::StorageShape *recvXStorageShape = context->GetInputShape(RECV_X_INDEX);
     int64_t recvXDim1 = recvXStorageShape->GetStorageShape().GetDim(1);
     OPS_CHECK((recvXDim1 < H_MIN) || (recvXDim1 > H_MAX),
                     OPS_LOG_E(nodeName, "recvX's dim1(H) should be in [%ld, %ld], but got %ld.", H_MIN, H_MAX, recvXDim1),
                     return false);  // 32对齐
-    tilingData.camMoeCombineNormalInfo.h = static_cast<uint32_t>(recvXDim1);
+    tilingData.moeCombineNormalInfo.h = static_cast<uint32_t>(recvXDim1);
 
     // 校验epRecvCount和tpRecvCount的维度
-    int64_t epWorldSize = static_cast<int64_t>(tilingData.camMoeCombineNormalInfo.epWorldSize);
-    int64_t moeExpertPerRankNum = static_cast<int64_t>(tilingData.camMoeCombineNormalInfo.moeExpertPerRankNum);
+    int64_t epWorldSize = static_cast<int64_t>(tilingData.moeCombineNormalInfo.epWorldSize);
+    int64_t moeExpertPerRankNum = static_cast<int64_t>(tilingData.moeCombineNormalInfo.moeExpertPerRankNum);
 
     // 校验x的维度
     const gert::StorageShape *xStorageShape = context->GetOutputShape(OUTPUT_X_INDEX);
@@ -400,12 +400,12 @@ static bool CheckTensorShape(gert::TilingContext *context, CamMoeCombineNormalTi
     return true;
 }
 
-static bool CheckAttrs(gert::TilingContext *context, CamMoeCombineNormalTilingData &tilingData, const char *nodeName,
+static bool CheckAttrs(gert::TilingContext *context, MoeCombineNormalTilingData &tilingData, const char *nodeName,
                        uint32_t &localMoeExpertNum)
 {
-    uint32_t epWorldSize = tilingData.camMoeCombineNormalInfo.epWorldSize;
-    uint32_t tpWorldSize = tilingData.camMoeCombineNormalInfo.tpWorldSize;
-    uint32_t moeExpertNum = tilingData.camMoeCombineNormalInfo.moeExpertNum;
+    uint32_t epWorldSize = tilingData.moeCombineNormalInfo.epWorldSize;
+    uint32_t tpWorldSize = tilingData.moeCombineNormalInfo.tpWorldSize;
+    uint32_t moeExpertNum = tilingData.moeCombineNormalInfo.moeExpertNum;
 
     // 校验moe专家数量能否均分给多机
     OPS_CHECK(moeExpertNum % epWorldSize != 0,
@@ -423,7 +423,7 @@ static bool CheckAttrs(gert::TilingContext *context, CamMoeCombineNormalTilingDa
                     OPS_LOG_E(nodeName, "Cannot support multi-moeExpert %d in a rank when tpWorldSize = %d > 1",
                             localMoeExpertNum, tpWorldSize),
                     return false);
-    tilingData.camMoeCombineNormalInfo.moeExpertPerRankNum = localMoeExpertNum;
+    tilingData.moeCombineNormalInfo.moeExpertPerRankNum = localMoeExpertNum;
 
     // 校验输入topkWeights的维度0并设bs
     const gert::StorageShape *topkWeightsStorageShape = context->GetInputShape(TOPK_WEIGHTS_INDEX);
@@ -432,14 +432,14 @@ static bool CheckAttrs(gert::TilingContext *context, CamMoeCombineNormalTilingDa
                     OPS_LOG_E(nodeName, "Invalid topkWeights dims0(BS) %ld. Should be between [1, %ld].", topkWeightsDim0,
                             BS_UPPER_BOUND),
                     return false);
-    tilingData.camMoeCombineNormalInfo.bs = static_cast<uint32_t>(topkWeightsDim0);
+    tilingData.moeCombineNormalInfo.bs = static_cast<uint32_t>(topkWeightsDim0);
 
     // 校验globalBS
     auto attrs = context->GetAttrs();
     OPS_CHECK(attrs == nullptr, OPS_LOG_E(nodeName, "attrs is null."), return false);
     auto globalBsPtr = attrs->GetAttrPointer<int64_t>(ATTR_GLOBAL_BS_INDEX);
     OPS_CHECK(globalBsPtr == nullptr, OPS_LOG_E(nodeName, "globalBs is null."), return false);
-    OPS_LOG_D(nodeName, "CamMoeCombineNormal *globalBsPtr = %ld, bs = %ld, epWorldSize = %u\n", *globalBsPtr,
+    OPS_LOG_D(nodeName, "MoeCombineNormal *globalBsPtr = %ld, bs = %ld, epWorldSize = %u\n", *globalBsPtr,
             topkWeightsDim0, epWorldSize);
 
     OPS_CHECK(
@@ -452,15 +452,15 @@ static bool CheckAttrs(gert::TilingContext *context, CamMoeCombineNormalTilingDa
                 *globalBsPtr, topkWeightsDim0, epWorldSize),
         return false);
 
-    tilingData.camMoeCombineNormalInfo.globalBs = static_cast<uint32_t>(*globalBsPtr);
+    tilingData.moeCombineNormalInfo.globalBs = static_cast<uint32_t>(*globalBsPtr);
     if (*globalBsPtr == 0) {
-        tilingData.camMoeCombineNormalInfo.globalBs = static_cast<uint32_t>(topkWeightsDim0) * epWorldSize;
+        tilingData.moeCombineNormalInfo.globalBs = static_cast<uint32_t>(topkWeightsDim0) * epWorldSize;
     }
 
     return true;
 }
 
-static ge::graphStatus TilingCheckCamMoeCombineNormal(gert::TilingContext *context, const char *nodeName,
+static ge::graphStatus TilingCheckMoeCombineNormal(gert::TilingContext *context, const char *nodeName,
                                                       const bool isEnableDiagnose)
 {
     // 检查参数shape信息
@@ -485,11 +485,11 @@ static ge::graphStatus SetWorkspace(gert::TilingContext *context, const char *no
     return ge::GRAPH_SUCCESS;
 }
 
-static void SetHCommCfg(gert::TilingContext *context, CamMoeCombineNormalTilingData *tiling, const std::string groupEp,
+static void SetHCommCfg(gert::TilingContext *context, MoeCombineNormalTilingData *tiling, const std::string groupEp,
                         const std::string groupTp)
 {
     const char *nodeName = context->GetNodeName();
-    OPS_LOG_D(nodeName, "CamMoeCombineNormal groupEp = %s, groupTp = %s", groupEp.c_str(), groupTp.c_str());
+    OPS_LOG_D(nodeName, "MoeCombineNormal groupEp = %s, groupTp = %s", groupEp.c_str(), groupTp.c_str());
     uint32_t opType1 = OP_TYPE_ALL_TO_ALL;
     uint32_t opType2 = OP_TYPE_REDUCE_SCATTER;
     std::string algConfigAllToAllStr = "AlltoAll=level0:fullmesh;level1:pairwise";
@@ -505,11 +505,11 @@ static void SetHCommCfg(gert::TilingContext *context, CamMoeCombineNormalTilingD
     mc2CcTilingConfig.GetTiling(tiling->mc2CcTiling2);
 }
 
-static ge::graphStatus CamMoeCombineNormalA3TilingFuncImpl(gert::TilingContext *context)
+static ge::graphStatus MoeCombineNormalA3TilingFuncImpl(gert::TilingContext *context)
 {
     const char *nodeName = context->GetNodeName();
-    OPS_LOG_D(nodeName, "Enter CamMoeCombineNormal Tiling func");
-    CamMoeCombineNormalTilingData *tilingData = context->GetTilingData<CamMoeCombineNormalTilingData>();
+    OPS_LOG_D(nodeName, "Enter MoeCombineNormal Tiling func");
+    MoeCombineNormalTilingData *tilingData = context->GetTilingData<MoeCombineNormalTilingData>();
     OPS_CHECK(tilingData == nullptr, OPS_LOG_E(nodeName, "tilingData is nullptr."), return ge::GRAPH_FAILED);
     std::string groupEp = "";
     std::string groupTp = "";
@@ -521,16 +521,16 @@ static ge::graphStatus CamMoeCombineNormalA3TilingFuncImpl(gert::TilingContext *
 
     auto sendCostStatsStorageShape = context->GetOutputShape(OUTPUT_SEND_COST_INDEX);
     bool isEnableDiagnose = (sendCostStatsStorageShape != nullptr);
-    tilingData->camMoeCombineNormalInfo.isEnableDiagnose = isEnableDiagnose;
+    tilingData->moeCombineNormalInfo.isEnableDiagnose = isEnableDiagnose;
     // 检查输入输出的dim、format、dataType
-    OPS_CHECK(TilingCheckCamMoeCombineNormal(context, nodeName, isEnableDiagnose) != ge::GRAPH_SUCCESS,
+    OPS_CHECK(TilingCheckMoeCombineNormal(context, nodeName, isEnableDiagnose) != ge::GRAPH_SUCCESS,
                     OPS_LOG_E(nodeName, "Tiling check params failed"), return ge::GRAPH_FAILED);
 
     // 检查属性的取值是否合法
     OPS_CHECK(!CheckAttrs(context, *tilingData, nodeName, localMoeExpertNum),
                     OPS_LOG_E(nodeName, "attr check failed."), return ge::GRAPH_FAILED);
 
-    uint32_t epRankId = tilingData->camMoeCombineNormalInfo.epRankId;
+    uint32_t epRankId = tilingData->moeCombineNormalInfo.epRankId;
 
     // 检查shape各维度并赋值h,k
     OPS_CHECK(!CheckTensorShape(context, *tilingData, nodeName, localMoeExpertNum),
@@ -538,10 +538,10 @@ static ge::graphStatus CamMoeCombineNormalA3TilingFuncImpl(gert::TilingContext *
 
     // 校验win区大小
     uint64_t maxWindowSize = Mc2TilingUtils::GetMaxWindowSize();
-    uint64_t h = static_cast<uint64_t>(tilingData->camMoeCombineNormalInfo.h);
-    uint64_t epWorldSize = static_cast<uint64_t>(tilingData->camMoeCombineNormalInfo.epWorldSize);
-    uint64_t k = static_cast<uint64_t>(tilingData->camMoeCombineNormalInfo.k);
-    uint64_t maxBs = static_cast<uint64_t>(tilingData->camMoeCombineNormalInfo.globalBs) / epWorldSize;
+    uint64_t h = static_cast<uint64_t>(tilingData->moeCombineNormalInfo.h);
+    uint64_t epWorldSize = static_cast<uint64_t>(tilingData->moeCombineNormalInfo.epWorldSize);
+    uint64_t k = static_cast<uint64_t>(tilingData->moeCombineNormalInfo.k);
+    uint64_t maxBs = static_cast<uint64_t>(tilingData->moeCombineNormalInfo.globalBs) / epWorldSize;
     // combine数据区 token首地址对齐512
     uint64_t tokenNeedSizeCombine = ((h * MAX_OUT_DTYPE_SIZE + WIN_ADDR_ALIGN - 1UL) / WIN_ADDR_ALIGN) * WIN_ADDR_ALIGN;
     uint64_t actualSize =
@@ -556,7 +556,7 @@ static ge::graphStatus CamMoeCombineNormalA3TilingFuncImpl(gert::TilingContext *
                 maxBs, h, epWorldSize, localMoeExpertNum, tokenNeedSizeCombine, k, actualSize / MB_SIZE + 1UL,
                 maxWindowSize / MB_SIZE),
         return ge::GRAPH_FAILED);
-    tilingData->camMoeCombineNormalInfo.totalWinSize = maxWindowSize;
+    tilingData->moeCombineNormalInfo.totalWinSize = maxWindowSize;
 
     OPS_CHECK(SetWorkspace(context, nodeName) != ge::GRAPH_SUCCESS,
                     VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "Tiling set workspace Failed"),
@@ -564,7 +564,7 @@ static ge::graphStatus CamMoeCombineNormalA3TilingFuncImpl(gert::TilingContext *
 
     SetHCommCfg(context, tilingData, groupEp, groupTp);
 
-    uint64_t tpWorldSize = static_cast<uint64_t>(tilingData->camMoeCombineNormalInfo.tpWorldSize);
+    uint64_t tpWorldSize = static_cast<uint64_t>(tilingData->moeCombineNormalInfo.tpWorldSize);
 
     uint32_t blockDim = 1U;
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
@@ -573,8 +573,8 @@ static ge::graphStatus CamMoeCombineNormalA3TilingFuncImpl(gert::TilingContext *
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     blockDim = ascendcPlatform.CalcTschBlockDim(aivNum, 0, aivNum);
     context->SetBlockDim(blockDim);
-    tilingData->camMoeCombineNormalInfo.aivNum = aivNum;
-    tilingData->camMoeCombineNormalInfo.totalUbSize = ubSize;
+    tilingData->moeCombineNormalInfo.aivNum = aivNum;
+    tilingData->moeCombineNormalInfo.totalUbSize = ubSize;
     context->SetScheduleMode(1);  // 设置为batch mode模式，所有核同时启动
     OPS_LOG_D(nodeName, "blockdim = %u, aivNum = %lu, ubsize = %lu", blockDim, aivNum, ubSize);
     PrintTilingDataInfo(nodeName, *tilingData);
@@ -582,7 +582,7 @@ static ge::graphStatus CamMoeCombineNormalA3TilingFuncImpl(gert::TilingContext *
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus CamMoeCombineNormalTilingFunc(gert::TilingContext *context)
+static ge::graphStatus MoeCombineNormalTilingFunc(gert::TilingContext *context)
 {
     // 不支持 recvX数据类型为int32 type
     auto recvXDesc = context->GetInputDesc(RECV_X_INDEX);
@@ -593,18 +593,18 @@ static ge::graphStatus CamMoeCombineNormalTilingFunc(gert::TilingContext *contex
                     OPS_LOG_E(nodeName, "recvX dataType is invalid, dataType should be bf16 or float16, but is "),
                     return ge::GRAPH_FAILED);
 
-    ge::graphStatus ret = CamMoeCombineNormalA3TilingFuncImpl(context);
+    ge::graphStatus ret = MoeCombineNormalA3TilingFuncImpl(context);
     return ret;
 }
 
-struct CamMoeCombineNormalCompileInfo {};
-ge::graphStatus TilingParseForCamMoeCombineNormal(gert::TilingParseContext *context)
+struct MoeCombineNormalCompileInfo {};
+ge::graphStatus TilingParseForMoeCombineNormal(gert::TilingParseContext *context)
 {
     (void)context;
     return ge::GRAPH_SUCCESS;
 }
 
-IMPL_OP_OPTILING(CamMoeCombineNormal)
-    .Tiling(CamMoeCombineNormalTilingFunc)
-    .TilingParse<CamMoeCombineNormalCompileInfo>(TilingParseForCamMoeCombineNormal);
+IMPL_OP_OPTILING(MoeCombineNormal)
+    .Tiling(MoeCombineNormalTilingFunc)
+    .TilingParse<MoeCombineNormalCompileInfo>(TilingParseForMoeCombineNormal);
 }  // namespace optiling

@@ -1,10 +1,10 @@
 #include "register/op_def_registry.h"
 
 namespace ops {
-class CamMoeDispatchNormal : public OpDef
+class MoeDispatchNormal : public OpDef
 {
 public:
-    explicit CamMoeDispatchNormal(const char *name) : OpDef(name)
+    explicit MoeDispatchNormal(const char *name) : OpDef(name)
     {
         this->Input("x")
             .ParamType(REQUIRED)
@@ -94,6 +94,6 @@ public:
     }
 };
 
-OP_ADD(CamMoeDispatchNormal);
+OP_ADD(MoeDispatchNormal);
 
 }  // namespace ops

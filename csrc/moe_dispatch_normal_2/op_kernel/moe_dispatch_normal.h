@@ -1,13 +1,13 @@
-#ifndef CAM_MOE_DISPATCH_NORMAL_H
-#define CAM_MOE_DISPATCH_NORMAL_H
+#ifndef MOE_DISPATCH_NORMAL_H
+#define MOE_DISPATCH_NORMAL_H
 
 #include "kernel_operator.h"
 #include "kernel_tiling/kernel_tiling.h"
 #include "moe_distribute_base.h"
-#include "cam_moe_dispatch_normal_tiling.h"
+#include "moe_dispatch_normal_tiling.h"
 #include "comm_args.h"
 
-namespace CamMoeDispatchNormalImpl {
+namespace MoeDispatchNormalImpl {
 constexpr uint8_t BUFFER_NUM = 2;
 constexpr uint32_t STATE_OFFSET = 32U;
 constexpr uint32_t UB_ALIGN = 32U;
@@ -30,21 +30,21 @@ __aicore__ inline void SyncFunc()
     AscendC::WaitFlag<event>(eventID);
 }
 
-#define CamTypeClass \
+#define TemplateTypeClass \
     typename XType, typename ExpandXOutType, bool DynamicQuant, bool IsSmoothScaleExist, bool IsShareExpertRank
 
-#define CamTypeFunc XType, ExpandXOutType, DynamicQuant, IsSmoothScaleExist, IsShareExpertRank
+#define TemplateTypeFunc XType, ExpandXOutType, DynamicQuant, IsSmoothScaleExist, IsShareExpertRank
 
 using namespace AscendC;
-template <CamTypeClass>
-class CamMoeDispatchNormal
+template <TemplateTypeClass>
+class MoeDispatchNormal
 {
 public:
-    __aicore__ inline CamMoeDispatchNormal(){};
+    __aicore__ inline MoeDispatchNormal(){};
     __aicore__ inline void Init(GM_ADDR x, GM_ADDR expertIds, GM_ADDR send_offset, GM_ADDR send_tokenIdx,
                                 GM_ADDR recv_offset, GM_ADDR recv_count, GM_ADDR expandXOut, GM_ADDR dynamicScalesOut,
                                 GM_ADDR expandIdxOut, GM_ADDR waitRecvCostStatsOut, GM_ADDR workspaceGM, TPipe *pipe,
-                                const CamMoeDispatchNormalTilingData *tilingData);
+                                const MoeDispatchNormalTilingData *tilingData);
     __aicore__ inline void Process();
 
 private:
@@ -162,11 +162,11 @@ private:
     DataCopyExtParams hCommuCopyOutParams;
 };
 
-template <CamTypeClass>
-__aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::Init(
+template <TemplateTypeClass>
+__aicore__ inline void MoeDispatchNormal<TemplateTypeFunc>::Init(
     GM_ADDR x, GM_ADDR expertIds, GM_ADDR send_offset, GM_ADDR send_tokenIdx, GM_ADDR recv_offset, GM_ADDR recv_count,
     GM_ADDR expandXOut, GM_ADDR dynamicScalesOut, GM_ADDR expandIdxOut, GM_ADDR waitRecvCostStatsOut,
-    GM_ADDR workspaceGM, TPipe *pipe, const CamMoeDispatchNormalTilingData *tilingData)
+    GM_ADDR workspaceGM, TPipe *pipe, const MoeDispatchNormalTilingData *tilingData)
 {
     tpipe_ = pipe;
     blockIdx = GetBlockIdx();
@@ -179,16 +179,16 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::Init(
     selfDataStatusTensor.SetGlobalBuffer(
         (__gm__ int32_t *)(statusDataSpaceGm + STATE_WIN_OFFSET + blockIdx * WIN_ADDR_ALIGN));
 
-    batchSize = tilingData->camMoeDispatchNormalInfo.bs;
-    globalBatchSize = tilingData->camMoeDispatchNormalInfo.globalBs;
-    h = tilingData->camMoeDispatchNormalInfo.h;
-    topK = tilingData->camMoeDispatchNormalInfo.k;
-    blockNum = tilingData->camMoeDispatchNormalInfo.aivNum;
-    epRankSize = tilingData->camMoeDispatchNormalInfo.epWorldSize;
-    epRankId = tilingData->camMoeDispatchNormalInfo.epRankId;
-    moeExpertNum = tilingData->camMoeDispatchNormalInfo.moeExpertNum;
+    batchSize = tilingData->moeDispatchNormalInfo.bs;
+    globalBatchSize = tilingData->moeDispatchNormalInfo.globalBs;
+    h = tilingData->moeDispatchNormalInfo.h;
+    topK = tilingData->moeDispatchNormalInfo.k;
+    blockNum = tilingData->moeDispatchNormalInfo.aivNum;
+    epRankSize = tilingData->moeDispatchNormalInfo.epWorldSize;
+    epRankId = tilingData->moeDispatchNormalInfo.epRankId;
+    moeExpertNum = tilingData->moeDispatchNormalInfo.moeExpertNum;
     moeExpertNumPerRank = moeExpertNum / epRankSize;
-    isEnableDiagnose = tilingData->camMoeDispatchNormalInfo.isEnableDiagnose;
+    isEnableDiagnose = tilingData->moeDispatchNormalInfo.isEnableDiagnose;
 
     xGT.SetGlobalBuffer((__gm__ XType *)x);
     expertIdsGT.SetGlobalBuffer((__gm__ int32_t *)expertIds);
@@ -236,7 +236,7 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::Init(
     PipeBarrier<PIPE_ALL>();
 
     uint64_t hSizeAlignCombine = Ceil(h * sizeof(XType), WIN_ADDR_ALIGN) * WIN_ADDR_ALIGN;
-    winDataSizeOffset = dataState * (tilingData->camMoeDispatchNormalInfo.totalWinSize / 2) +
+    winDataSizeOffset = dataState * (tilingData->moeDispatchNormalInfo.totalWinSize / 2) +
                         globalBatchSize / epRankSize * topK * hSizeAlignCombine;
     shareGM = GetWindAddrByRankId(COMM_EP_IDX, epRankId);
 
@@ -253,8 +253,8 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::Init(
     hCommuCopyOutParams = {1U, static_cast<uint32_t>(hScaleIdxSize), 0U, 0U, 0U};
 }
 
-template <CamTypeClass>
-__aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::QuantInit()
+template <TemplateTypeClass>
+__aicore__ inline void MoeDispatchNormal<TemplateTypeFunc>::QuantInit()
 {
     uint32_t hAlignSize = Ceil(h * sizeof(XType), UB_ALIGN) * UB_ALIGN;
     tpipe_->InitBuffer(xInQueue, BUFFER_NUM, hAlignSize);        // 14K * 2
@@ -264,8 +264,8 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::QuantInit()
     tpipe_->InitBuffer(tokenAbsFloatBuf, h * sizeof(float));   // 28K
 }
 
-template <CamTypeClass>
-__aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::ReduceMaxInplace(const LocalTensor<float> &srcLocal,
+template <TemplateTypeClass>
+__aicore__ inline void MoeDispatchNormal<TemplateTypeFunc>::ReduceMaxInplace(const LocalTensor<float> &srcLocal,
                                                                            uint32_t count)
 {
     uint64_t repsFp32 = count >> 6;        // 6 is count / elemPerRefFp32
@@ -286,8 +286,8 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::ReduceMaxInplace(const
     WholeReduceMax(srcLocal, srcLocal, mask, 1, 8, 1, 8);
 }
 
-template <CamTypeClass>
-__aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::QuantProcess()
+template <TemplateTypeClass>
+__aicore__ inline void MoeDispatchNormal<TemplateTypeFunc>::QuantProcess()
 {
     float dynamicScale = 0.0;
     LocalTensor<float> floatLocalTemp;
@@ -326,8 +326,8 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::QuantProcess()
     floatLocalTemp.SetValue(hUBAlignSize / sizeof(float), float(1.0) / dynamicScale);  // int8->float32
 }
 
-template <CamTypeClass>
-__aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::FillTriple(LocalTensor<ExpandXOutType> &xOutTensor,
+template <TemplateTypeClass>
+__aicore__ inline void MoeDispatchNormal<TemplateTypeFunc>::FillTriple(LocalTensor<ExpandXOutType> &xOutTensor,
                                                                      uint32_t tokenIndex, uint32_t k)
 {
     SyncFunc<AscendC::HardEvent::MTE3_S>();
@@ -338,8 +338,8 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::FillTriple(LocalTensor
     SyncFunc<AscendC::HardEvent::S_MTE3>();
 }
 
-template <CamTypeClass>
-__aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::InputToShare()
+template <TemplateTypeClass>
+__aicore__ inline void MoeDispatchNormal<TemplateTypeFunc>::InputToShare()
 {
     DataCopyExtParams sendOffsetParams = {1U, static_cast<uint32_t>(moeExpertNum * sizeof(uint32_t)), 0U, 0U, 0U};
     DataCopyPadExtParams<int32_t> sendOffsetCopyPadParams{false, 0U, 0U, 0U};
@@ -405,8 +405,8 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::InputToShare()
     }
 }
 
-template <CamTypeClass>
-__aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::SetStatus()
+template <TemplateTypeClass>
+__aicore__ inline void MoeDispatchNormal<TemplateTypeFunc>::SetStatus()
 {
     uint32_t startExpId, endExpId, expNumPerCore;
     expNumPerCore = statusNumPerCore;
@@ -435,8 +435,8 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::SetStatus()
     SyncFunc<AscendC::HardEvent::MTE3_S>();
 }
 
-template <CamTypeClass>
-__aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::WaitStatus()
+template <TemplateTypeClass>
+__aicore__ inline void MoeDispatchNormal<TemplateTypeFunc>::WaitStatus()
 {
     tpipe_->Reset();
     uint32_t waitStatusBufSize = (((statusNumPerCore * UB_ALIGN) > 256) ? (statusNumPerCore * UB_ALIGN) : 256);
@@ -540,8 +540,8 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::WaitStatus()
     SyncAll<true>();
 }
 
-template <CamTypeClass>
-__aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::ShareToOutput()
+template <TemplateTypeClass>
+__aicore__ inline void MoeDispatchNormal<TemplateTypeFunc>::ShareToOutput()
 {
     if (startStatusId >= moeExpertNum) {
         return;
@@ -589,8 +589,8 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::ShareToOutput()
     }
 }
 
-template <CamTypeClass>
-__aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::Process()
+template <TemplateTypeClass>
+__aicore__ inline void MoeDispatchNormal<TemplateTypeFunc>::Process()
 {
     if ASCEND_IS_AIV {
         InputToShare();
@@ -600,5 +600,5 @@ __aicore__ inline void CamMoeDispatchNormal<CamTypeFunc>::Process()
     }
 }
 
-}  // namespace CamMoeDispatchNormalImpl
+}  // namespace MoeDispatchNormalImpl
 #endif

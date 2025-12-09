@@ -1,6 +1,6 @@
 #include <string.h>
 #include "graph/types.h"
-#include "aclnn_cam_moe_dispatch_normal.h"
+#include "aclnn_moe_dispatch_normal.h"
 
 enum NnopbaseHcclServerType {
     NNOPBASE_HCCL_SERVER_TYPE_AICPU = 0,
@@ -13,7 +13,7 @@ extern "C" void __attribute__((weak)) NnopbaseSetHcclServerType(void *executor, 
 extern "C" {
 #endif
 
-extern aclnnStatus aclnnInnerCamMoeDispatchNormalGetWorkspaceSize(
+extern aclnnStatus aclnnInnerMoeDispatchNormalGetWorkspaceSize(
     const aclTensor *x,
     const aclTensor *topkIdx,
     const aclTensor *sendOffset,
@@ -36,32 +36,32 @@ extern aclnnStatus aclnnInnerCamMoeDispatchNormalGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor);
 
-extern aclnnStatus aclnnInnerCamMoeDispatchNormal(
+extern aclnnStatus aclnnInnerMoeDispatchNormal(
     void *workspace,
     uint64_t workspaceSize,
     aclOpExecutor *executor,
     aclrtStream stream);
 
-aclnnStatus aclnnCamMoeDispatchNormalGetWorkspaceSize(
+aclnnStatus aclnnMoeDispatchNormalGetWorkspaceSize(
     const aclTensor *x, const aclTensor *topkIdx, const aclTensor *sendOffset, const aclTensor *sendTokenIdx,
     const aclTensor *recvOffset, const aclTensor *recvCount, char *groupEp, int64_t epWorldSize, int64_t epRankId,
     char *groupTpOptional, int64_t tpWorldSize, int64_t tpRankId, int64_t moeExpertNum, int64_t quantMode,
     int64_t globalBs, const aclTensor *recvX, const aclTensor *recvXScales, const aclTensor *assistInfoForCombine,
     const aclTensor *waitRecvCostStats, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    return aclnnInnerCamMoeDispatchNormalGetWorkspaceSize(
+    return aclnnInnerMoeDispatchNormalGetWorkspaceSize(
         x, topkIdx, sendOffset, sendTokenIdx, recvOffset, recvCount, groupEp, epWorldSize, epRankId, groupTpOptional,
         tpWorldSize, tpRankId, moeExpertNum, quantMode, globalBs, recvX, recvXScales, assistInfoForCombine,
         waitRecvCostStats, workspaceSize, executor);
 }
 
-aclnnStatus aclnnCamMoeDispatchNormal(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor,
+aclnnStatus aclnnMoeDispatchNormal(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor,
                                       aclrtStream stream)
 {
     if (NnopbaseSetHcclServerType) {
         NnopbaseSetHcclServerType(executor, NNOPBASE_HCCL_SERVER_TYPE_MTE);
     }
-    return aclnnInnerCamMoeDispatchNormal(workspace, workspaceSize, executor, stream);
+    return aclnnInnerMoeDispatchNormal(workspace, workspaceSize, executor, stream);
 }
 
 #ifdef __cplusplus

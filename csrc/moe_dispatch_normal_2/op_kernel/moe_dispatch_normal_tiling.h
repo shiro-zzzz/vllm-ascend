@@ -1,7 +1,7 @@
-#ifndef CAM_MOE_DISPATCH_NORMAL_TILING_H
-#define CAM_MOE_DISPATCH_NORMAL_TILING_H
+#ifndef MOE_DISPATCH_NORMAL_TILING_H
+#define MOE_DISPATCH_NORMAL_TILING_H
 
-struct CamMoeDispatchNormalInfo {
+struct MoeDispatchNormalInfo {
     uint32_t epWorldSize;   // epWorldSize
     uint32_t tpWorldSize;   // tpWorldSize
     uint32_t epRankId;      // epRankId
@@ -21,11 +21,11 @@ struct CamMoeDispatchNormalInfo {
     uint64_t totalWinSize;
 };
 
-struct CamMoeDispatchNormalTilingData {
+struct MoeDispatchNormalTilingData {
     Mc2InitTiling mc2InitTiling;
     Mc2CcTiling mc2CcTiling1;
     Mc2CcTiling mc2CcTiling2;
-    CamMoeDispatchNormalInfo camMoeDispatchNormalInfo;
+    MoeDispatchNormalInfo moeDispatchNormalInfo;
 };
 
 #endif
