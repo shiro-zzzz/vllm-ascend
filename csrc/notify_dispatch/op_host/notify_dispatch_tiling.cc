@@ -18,32 +18,10 @@
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling/hccl/hccl_tiling.h"
 #include "platform/platform_infos_def.h"
+#include "tiling/mc2_tiling_utils.h"
 
 using namespace ge;
 namespace {
-class Mc2TilingUtils {
-public:
-#define HCCL_BUFFSIZE "HCCL_BUFFSIZE"
-    static uint64_t GetMaxWindowSize()
-    {
-        uint16_t defaultWindowSize = 200;
-        if (getenv(HCCL_BUFFSIZE) == nullptr) {
-            OPS_LOG_D("", "Env HCCL_BUFFSIZE don't set");
-        } else {
-            try {
-                std::string envStr(getenv(HCCL_BUFFSIZE));
-                defaultWindowSize = std::stoi(envStr);
-            } catch (const std::invalid_argument &ia) {
-                OPS_LOG_E("", "Invalid argument when parsing HCCL_BUFFSIZE: %s", ia.what());
-            } catch (const std::out_of_range &oor) {
-                OPS_LOG_E("", "Out of range when parsing HCCL_BUFFSIZE: %s", oor.what());
-            }
-        }
-        const uint64_t maxWindowSize = static_cast<uint64_t>(defaultWindowSize) * 1024UL * 1024UL;
-        OPS_LOG_I("", "Get maxWindowSize is %lu", maxWindowSize);
-        return maxWindowSize;
-    }
-};
 constexpr uint32_t OP_TYPE_ALL_TO_ALL = 8U;  // numeric representation of AlltoAll
 
 constexpr uint32_t INPUT_SEND_DATA_INDEX = 0;

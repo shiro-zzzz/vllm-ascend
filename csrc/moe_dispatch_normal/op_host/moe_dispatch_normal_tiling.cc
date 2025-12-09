@@ -18,32 +18,12 @@
 #include "graph/utils/type_utils.h"
 #include "register/op_def_registry.h"
 #include "../op_kernel/moe_dispatch_normal_tiling.h"
+#include "tiling/mc2_tiling_utils.h"
 
 using namespace AscendC;
 using namespace ge;
 
 namespace {
-class Mc2TilingUtils {
-public:
-#define HCCL_BUFFSIZE "HCCL_BUFFSIZE"
-    static uint64_t GetMaxWindowSize()
-    {
-        uint16_t defaultWindowSize = 200;
-        if (getenv(HCCL_BUFFSIZE) == nullptr) {
-            OPS_LOG_D("", "Env HCCL_BUFFSIZE don't set");
-        } else {
-            try {
-                std::string envStr(getenv(HCCL_BUFFSIZE));
-                defaultWindowSize = std::stoi(envStr);
-            } catch (...) {
-                OPS_LOG_E("", "Unknown Exception encountered when parser env HCCL_BUFFERSIZE");
-            }
-        }
-        const uint64_t maxWindowSize = static_cast<uint64_t>(defaultWindowSize) * 1024UL * 1024UL;
-        OPS_LOG_I("", "Get maxWindowSize is %lu", maxWindowSize);
-        return maxWindowSize;
-    }
-};
 constexpr uint32_t X_INDEX = 0U;
 constexpr uint32_t EXPERT_IDS_INDEX = 1U;
 constexpr uint32_t SEND_OFFSET_INDEX = 2U;
