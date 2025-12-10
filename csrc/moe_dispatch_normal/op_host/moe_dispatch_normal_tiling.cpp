@@ -19,11 +19,14 @@
 #include "register/op_def_registry.h"
 #include "../op_kernel/moe_dispatch_normal_tiling.h"
 #include "tiling/mc2_tiling_utils.h"
+#include "tiling/tiling_args.h"
 
 using namespace AscendC;
 using namespace ge;
 
 namespace {
+using Moe::COMBINE_STATE_WIN_OFFSET;
+using Moe::NOTIFY_DISPATCH_WIN_OFFSET;
 constexpr uint32_t X_INDEX = 0U;
 constexpr uint32_t EXPERT_IDS_INDEX = 1U;
 constexpr uint32_t SEND_OFFSET_INDEX = 2U;
