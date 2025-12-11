@@ -1112,11 +1112,35 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
     );
     ops.impl("dispatch_ffn_combine", torch::kPrivateUse1, &vllm_ascend::dispatch_ffn_combine);
 
+    // MoE Dispatch Layout: Compute token routing layout for expert parallelism
+    // Args:
+    //   topk_idx: [num_tokens, num_topk] int32 - Top-k expert indices for each token
+    //   num_experts: int - Total number of experts across all ranks
+    //   num_ranks: int - Total number of ranks in expert parallel group
+    // Returns:
+    //   num_tokens_per_expert: [num_experts] int32 - Number of tokens assigned to each expert
+    //   send_token_idx_small: [num_tokens, num_topk] int32 - Compact token indices for dispatch
     ops.def("get_dispatch_layout(Tensor topk_idx, int num_experts, int "
             "num_ranks) -> (Tensor num_tokens_per_expert, Tensor send_token_idx_small)");
     ops.impl("get_dispatch_layout", torch::kPrivateUse1,
              &vllm_ascend::get_dispatch_layout);
 
+    // MoE Dispatch Prefill: Distribute tokens to experts across ranks for prefill phase
+    // Args:
+    //   x: [num_tokens, hidden] - Input token embeddings
+    //   topk_idx: [num_tokens, num_topk] - Top-k expert indices per token
+    //   topk_weights: [num_tokens, num_topk] float - Expert routing weights
+    //   num_tokens_per_expert: [num_experts] int32 - Token count per expert (from get_dispatch_layout)
+    //   send_token_idx_small: [num_tokens, num_topk] int32 - Compact indices (from get_dispatch_layout)
+    //   groupEp: str - Expert parallel communication group name
+    //   rank: int - Current rank ID in expert parallel group
+    //   num_ranks: int - Total ranks in expert parallel group
+    //   use_quant: bool - Enable dynamic quantization for communication
+    // Returns:
+    //   expandx_out: [num_recv_tokens, hidden] - Received tokens after all-to-all (char if quantized)
+    //   expand_idx_out: [num_recv_tokens * 3] int32 - Metadata for received tokens (rank_id, token_idx, topk_idx)
+    //   recv_count: [num_experts] int32 - Receive counts per expert for this rank
+    //   recv_tokens_per_expert: [num_local_experts] int64 - Tokens received per local expert
     ops.def(
         "dispatch_prefill(Tensor x, Tensor topk_idx, Tensor topk_weights, "
         "Tensor num_tokens_per_expert, Tensor send_token_idx_small, "
@@ -1125,6 +1149,18 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
     ops.impl("dispatch_prefill", torch::kPrivateUse1,
              &vllm_ascend::dispatch_prefill);
 
+    // MoE Combine Prefill: Gather expert outputs and combine with routing weights
+    // Args:
+    //   x: [num_recv_tokens, hidden] - Expert outputs from local experts
+    //   topk_idx: [num_tokens, num_topk] - Original top-k expert indices
+    //   topk_weights: [num_tokens, num_topk] float - Expert routing weights for weighted sum
+    //   src_idx: [num_recv_tokens * 3] int32 - Source metadata (rank_id, token_idx, topk_idx)
+    //   send_head: [num_experts] int32 - Send counts per expert
+    //   groupEp: str - Expert parallel communication group name
+    //   rank: int - Current rank ID in expert parallel group
+    //   num_ranks: int - Total ranks in expert parallel group
+    // Returns:
+    //   combined_x: [num_tokens, hidden] - Combined expert outputs with routing weights applied
     ops.def("combine_prefill(Tensor x, Tensor topk_idx, Tensor topk_weights, "
             "Tensor src_idx, Tensor send_head, str grouEp, int rank, int "
             "num_ranks) -> Tensor");
