@@ -858,7 +858,11 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> dispatch_prefill(
     group_ep_chrs.push_back('\0');
     char* group_ep_ptr = &group_ep_chrs[0];
 
-    at::Tensor expert_ids = topk_idx.to(at::kInt);
+    // Convert topk_idx to int32 if necessary
+    at::Tensor topk_idx_int32 = topk_idx.scalar_type() == at::kInt 
+        ? topk_idx 
+        : topk_idx.to(at::kInt);
+    at::Tensor expert_ids = topk_idx_int32;
     int64_t tp_size = 1;
     int64_t tp_rank = 0;
     int64_t quant_mode = use_quant ? DYNAMIC_SCALES : NO_SCALES;
@@ -877,11 +881,11 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> dispatch_prefill(
     auto num_local_experts = static_cast<int>(num_experts / num_ranks);
 
     // Top-k checks
-    int num_topk = static_cast<int>(topk_idx.size(1));
+    int num_topk = static_cast<int>(topk_idx_int32.size(1));
     TORCH_BIND_ASSERT(num_experts > 0);
-    TORCH_BIND_ASSERT(topk_idx.dim() == 2 and topk_idx.is_contiguous());
+    TORCH_BIND_ASSERT(topk_idx_int32.dim() == 2 and topk_idx_int32.is_contiguous());
     TORCH_BIND_ASSERT(topk_weights.dim() == 2 and topk_weights.is_contiguous());
-    TORCH_BIND_ASSERT(num_tokens == topk_idx.size(0));
+    TORCH_BIND_ASSERT(num_tokens == topk_idx_int32.size(0));
     TORCH_BIND_ASSERT(num_topk == topk_weights.size(1));
 
     int send_per_group = 3;  // (send_to_expert_num, send_to_expert_offset, send_rank_tokens)
@@ -959,13 +963,16 @@ at::Tensor combine_prefill(const at::Tensor& x, const at::Tensor& topk_idx, cons
 
     TORCH_BIND_ASSERT(x.dim() == 2 and x.is_contiguous());
 
-    auto topk_idx_int32 = topk_idx.to(at::kInt);
+    // Convert topk_idx to int32 if necessary
+    at::Tensor topk_idx_int32 = topk_idx.scalar_type() == at::kInt 
+        ? topk_idx 
+        : topk_idx.to(at::kInt);
     at::Tensor token_src_info = src_idx;
     at::Tensor ep_send_counts = send_head;
     auto device = x.device();
 
-    const int num_tokens = topk_idx.size(0);
-    const int num_topk = topk_idx.size(1);
+    const int num_tokens = topk_idx_int32.size(0);
+    const int num_topk = topk_idx_int32.size(1);
 
     // Convert topk_weights to float if necessary
     at::Tensor expert_scales = topk_weights.scalar_type() == at::kFloat
@@ -977,7 +984,7 @@ at::Tensor combine_prefill(const at::Tensor& x, const at::Tensor& topk_idx, cons
     int64_t tp_world_size = 1;
     int64_t tp_rankId = 0;
     int64_t moe_expert_number = send_head.size(0);
-    int64_t global_bs = topk_idx.size(0) * num_ranks;
+    int64_t global_bs = topk_idx_int32.size(0) * num_ranks;
 
     // Combine data
     auto combined_x = torch::empty({expert_scales.size(0), hidden}, x.options());
