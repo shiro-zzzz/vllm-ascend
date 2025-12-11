@@ -883,7 +883,6 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> dispatch_prefill(
     TORCH_BIND_ASSERT(topk_weights.dim() == 2 and topk_weights.is_contiguous());
     TORCH_BIND_ASSERT(num_tokens == topk_idx.size(0));
     TORCH_BIND_ASSERT(num_topk == topk_weights.size(1));
-    TORCH_BIND_ASSERT(topk_weights.scalar_type() == at::kFloat);
 
     int send_per_group = 3;  // (send_to_expert_num, send_to_expert_offset, send_rank_tokens)
 
@@ -967,7 +966,11 @@ at::Tensor combine_prefill(const at::Tensor& x, const at::Tensor& topk_idx, cons
 
     const int num_tokens = topk_idx.size(0);
     const int num_topk = topk_idx.size(1);
-    at::Tensor expert_scales = topk_weights;
+
+    // Convert topk_weights to float if necessary
+    at::Tensor expert_scales = topk_weights.scalar_type() == at::kFloat
+        ? topk_weights
+        : topk_weights.to(at::kFloat);
 
     int64_t hidden = static_cast<int>(x.size(1));
     at::Tensor tp_send_counts = at::empty({1}, at::dtype(at::kInt).device(device));
