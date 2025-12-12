@@ -103,3 +103,45 @@ TORCH_LIBRARY_IMPL(my_npu_lib, AutogradPrivateUse1, m) {
 TORCH_LIBRARY_IMPL(my_npu_lib, PrivateUse1, m) {
     m.impl("multi_op", my_npu_forward_impl);
 }
+
+// ==========================================
+
+//只定义正向
+#include <torch/extension.h>
+#include <torch/library.h>
+#include <tuple>
+
+// ==========================================
+// 1. 纯粹的 NPU Kernel 实现
+// ==========================================
+// 这里没有 Autograd context，就像写普通的 C++ 函数一样
+// 假设逻辑：out1 = x + y, out2 = x * y
+
+std::tuple<torch::Tensor, torch::Tensor> my_npu_inference_impl(
+    const torch::Tensor& x, 
+    const torch::Tensor& y) {
+    
+    // 在这里调用你的 NPU API (ACL, etc.)
+    // ...
+    
+    // 模拟实现
+    auto out1 = x + y;
+    auto out2 = x * y;
+    
+    // 直接返回 tuple 即可，不需要像 Autograd 那样包成 vector
+    return std::make_tuple(out1, out2);
+}
+
+// ==========================================
+// 2. 注册算子
+// ==========================================
+
+TORCH_LIBRARY(my_npu_lib, m) {
+    // 定义 Schema
+    m.def("inference_op(Tensor x, Tensor y) -> (Tensor, Tensor)");
+}
+
+// 绑定到 NPU 后端 (PrivateUse1)
+TORCH_LIBRARY_IMPL(my_npu_lib, PrivateUse1, m) {
+    m.impl("inference_op", my_npu_inference_impl);
+}
