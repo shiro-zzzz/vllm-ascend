@@ -20,6 +20,9 @@ import torch
 import torch.distributed as dist
 import torch_npu
 
+from vllm_ascend.utils import enable_custom_op
+enable_custom_op()
+
 
 def init_dist(local_rank: int, num_local_ranks: int):
     """Initialize distributed environment for multiprocessing.spawn."""
