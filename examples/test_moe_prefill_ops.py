@@ -345,20 +345,20 @@ def main():
     parser.add_argument(
         "--num-processes",
         type=int,
-        default=8,
-        help="Number of processes to spawn (default: 8)"
+        default=16,
+        help="Number of processes to spawn (default: 16)"
     )
     parser.add_argument(
         "--num-tokens",
         type=int,
-        default=1024,
-        help="Number of tokens (default: 1024)"
+        default=3648,
+        help="Number of tokens (default: 3648)"
     )
     parser.add_argument(
         "--hidden",
         type=int,
-        default=7168,
-        help="Hidden dimension size (default: 7168)"
+        default=4096,
+        help="Hidden dimension size (default: 4096)"
     )
     parser.add_argument(
         "--num-topk",
@@ -369,8 +369,8 @@ def main():
     parser.add_argument(
         "--num-experts",
         type=int,
-        default=16,
-        help="Number of experts (default: 16)"
+        default=256,
+        help="Number of experts (default: 256)"
     )
     parser.add_argument(
         "--active-ranks",
