@@ -110,6 +110,10 @@ env_variables: dict[str, Callable[[], Any]] = {
     # `dispatch_gmm_combine_decode` can be used only for **decode node** moe layer
     # with W8A8. And MTP layer must be W8A8.
     "VLLM_ASCEND_ENABLE_FUSED_MC2": lambda: int(os.getenv("VLLM_ASCEND_ENABLE_FUSED_MC2", "0")),
+    # Whether to enable the prefill operators (get_dispatch_layout, dispatch_prefill, combine_prefill)
+    # for MoE token dispatching. When enabled, these optimized operators will be used for batch sizes > 3.
+    # For smaller batch sizes, the original All2AllV logic is used to avoid operator overhead.
+    "VLLM_ASCEND_ENABLE_PREFILL_OPS": lambda: bool(int(os.getenv("VLLM_ASCEND_ENABLE_PREFILL_OPS", "0"))),
     # Whether to anbale balance scheduling
     "VLLM_ASCEND_BALANCE_SCHEDULING": lambda: bool(int(os.getenv("VLLM_ASCEND_BALANCE_SCHEDULING", "0"))),
 }

@@ -27,6 +27,7 @@ class MoECommType(Enum):
     MC2 = 1
     ALLTOALL = 2
     FUSED_MC2 = 3
+    PREFILL = 4
 
 
 @contextmanager
@@ -252,12 +253,18 @@ def select_moe_comm_method(num_tokens: int, vllm_config: VllmConfig, is_draft_mo
                 fused_decode_enable = fused_mc2_enable and speculative_enable_dispatch_gmm_combine_decode(vllm_config)
             moe_comm_type = MoECommType.FUSED_MC2 if fused_decode_enable else MoECommType.MC2
         else:
-            fused_prefill_enable = fused_mc2_enable
-            if envs_ascend.VLLM_ASCEND_ENABLE_FUSED_MC2 == 1:
-                fused_prefill_enable = fused_mc2_enable and dispatch_ffn_combine_enable
-            elif envs_ascend.VLLM_ASCEND_ENABLE_FUSED_MC2 == 2:
-                fused_prefill_enable = False
-            moe_comm_type = MoECommType.FUSED_MC2 if fused_prefill_enable else MoECommType.ALLTOALL
+            # Use PREFILL method for large token counts (prefill phase)
+            # PREFILL internally uses new prefill operators when bs > 3, otherwise falls back to All2AllV
+            use_prefill_method = envs_ascend.VLLM_ASCEND_ENABLE_PREFILL_OPS
+            if use_prefill_method:
+                moe_comm_type = MoECommType.PREFILL
+            else:
+                fused_prefill_enable = fused_mc2_enable
+                if envs_ascend.VLLM_ASCEND_ENABLE_FUSED_MC2 == 1:
+                    fused_prefill_enable = fused_mc2_enable and dispatch_ffn_combine_enable
+                elif envs_ascend.VLLM_ASCEND_ENABLE_FUSED_MC2 == 2:
+                    fused_prefill_enable = False
+                moe_comm_type = MoECommType.FUSED_MC2 if fused_prefill_enable else MoECommType.ALLTOALL
 
     else:
         raise ValueError(f"Unsupported soc_version: {soc_version}")

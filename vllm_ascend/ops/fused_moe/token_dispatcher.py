@@ -626,3 +626,140 @@ class TokenDispatcherWithAll2AllV(MoETokenDispatcher):
         )
         output = output.view(self.hidden_shape)
         return output
+
+
+class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
+    """
+    Token dispatcher implementation that uses prefill-specific operators for better performance.
+    
+    This implementation uses three new operators:
+    - `get_dispatch_layout`: Computes the dispatch layout for token distribution
+    - `dispatch_prefill`: Distributes tokens to experts across ranks
+    - `combine_prefill`: Gathers expert outputs and combines with routing weights
+    
+    For small batch sizes (bs <= 3), it falls back to the original All2AllV logic
+    to avoid overhead from the new operators.
+    """
+
+    # Threshold for switching between original and new logic
+    BS_THRESHOLD = 3
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Get HCCL communication group name for EP group
+        local_rank = torch.distributed.get_rank(group=self.ep_group)
+        backend = self.ep_group._get_backend(torch.device("npu"))
+        self.ep_group_name = backend.get_hccl_comm_name(local_rank)
+
+    def token_dispatch(self,
+                       hidden_states: torch.Tensor,
+                       topk_weights: torch.Tensor,
+                       topk_ids: torch.Tensor,
+                       expert_map: Optional[torch.Tensor] = None,
+                       global_redundant_expert_num: int = 0,
+                       mc2_mask: Optional[torch.Tensor] = None,
+                       apply_router_weight_on_input: bool = False,
+                       with_quant: bool = False,
+                       dynamic_eplb: bool = False,
+                       pertoken_scale: Optional[torch.Tensor] = None):
+        """
+        Dispatch tokens to experts.
+        
+        For bs <= BS_THRESHOLD, uses the original All2AllV logic.
+        For bs > BS_THRESHOLD, uses the new prefill operators.
+        """
+        num_tokens = hidden_states.shape[0]
+        
+        # Use original logic for small batch sizes
+        if num_tokens <= self.BS_THRESHOLD:
+            return super().token_dispatch(
+                hidden_states=hidden_states,
+                topk_weights=topk_weights,
+                topk_ids=topk_ids,
+                expert_map=expert_map,
+                global_redundant_expert_num=global_redundant_expert_num,
+                mc2_mask=mc2_mask,
+                apply_router_weight_on_input=apply_router_weight_on_input,
+                with_quant=with_quant,
+                dynamic_eplb=dynamic_eplb,
+                pertoken_scale=pertoken_scale)
+
+        # New prefill logic for larger batch sizes
+        self.with_quant = with_quant
+        self.hidden_shape = hidden_states.shape
+        self.hidden_shape_before_permute = hidden_states.view(-1, hidden_states.size(-1)).shape
+
+        # Step 1: Get dispatch layout
+        num_tokens_per_expert, send_token_idx_small = torch.ops._C_ascend.get_dispatch_layout(
+            topk_ids, self.num_experts, self.ep_size)
+
+        # Step 2: Dispatch tokens using prefill operator
+        (expandx_out, dynamic_scales_out, expand_idx_out, 
+         recv_count, recv_tokens_per_expert) = torch.ops._C_ascend.dispatch_prefill(
+            hidden_states,
+            topk_ids,
+            topk_weights,
+            num_tokens_per_expert,
+            send_token_idx_small,
+            self.ep_group_name,
+            self.ep_rank,
+            self.ep_size,
+            with_quant)
+
+        # Build context metadata for combine phase
+        context_metadata = {
+            "use_prefill_ops": True,
+            "topk_ids": topk_ids,
+            "topk_weights": topk_weights,
+            "expand_idx_out": expand_idx_out,
+            "recv_count": recv_count,
+        }
+
+        return TokenDispatchResult(
+            hidden_states=expandx_out,
+            dynamic_scale=dynamic_scales_out if with_quant else None,
+            group_list=recv_tokens_per_expert,
+            group_list_type=1,  # count mode
+            context_metadata=context_metadata,
+        )
+
+    def token_combine(self, hidden_states, context_metadata, bias=None):
+        """
+        Combine expert outputs.
+        
+        Checks context_metadata to determine whether to use prefill ops or original logic.
+        """
+        assert bias is None, "Bias is not supported in TokenDispatcherWithPrefill."
+
+        # Check if we used prefill ops in dispatch phase
+        if context_metadata.get("use_prefill_ops", False):
+            return self._combine_with_prefill_ops(hidden_states, context_metadata)
+        else:
+            # Use original All2AllV combine logic
+            return super().token_combine(hidden_states, context_metadata, bias)
+
+    def _combine_with_prefill_ops(self, hidden_states: torch.Tensor,
+                                   context_metadata: dict) -> TokenCombineResult:
+        """
+        Combine using the prefill operators.
+        """
+        topk_ids = context_metadata["topk_ids"]
+        topk_weights = context_metadata["topk_weights"]
+        expand_idx_out = context_metadata["expand_idx_out"]
+        recv_count = context_metadata["recv_count"]
+
+        # Use combine_prefill operator
+        combined_x = torch.ops._C_ascend.combine_prefill(
+            hidden_states,
+            topk_ids,
+            topk_weights,
+            expand_idx_out,
+            recv_count,
+            self.ep_group_name,
+            self.ep_rank,
+            self.ep_size)
+
+        # Reshape to original hidden shape
+        combined_x = combined_x.view(self.hidden_shape)
+
+        return TokenCombineResult(routed_out=combined_x)

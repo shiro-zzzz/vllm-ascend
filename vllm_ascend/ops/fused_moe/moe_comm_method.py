@@ -31,7 +31,8 @@ from vllm_ascend.ops.fused_moe.prepare_finalize import (
     PrepareAndFinalizeWithAllGather, PrepareAndFinalizeWithMC2, QuantType)
 from vllm_ascend.ops.fused_moe.token_dispatcher import (
     MoETokenDispatcher, TokenDispatcherWithAll2AllV,
-    TokenDispatcherWithAllGather, TokenDispatcherWithMC2)
+    TokenDispatcherWithAllGather, TokenDispatcherWithMC2,
+    TokenDispatcherWithPrefill)
 
 _MoECommMethods: Dict[Optional[MoECommType], MoECommMethod] = {}
 
@@ -46,6 +47,7 @@ def setup_moe_comm_method(moe_config):
     _MoECommMethods[MoECommType.ALLGATHER] = AllGatherCommImpl(moe_config)
     _MoECommMethods[MoECommType.MC2] = MC2CommImpl(moe_config)
     _MoECommMethods[MoECommType.FUSED_MC2] = FusedMC2CommImpl(moe_config)
+    _MoECommMethods[MoECommType.PREFILL] = PrefillCommImpl(moe_config)
 
 
 @dataclass
@@ -244,6 +246,28 @@ class AlltoAllCommImpl(MoECommMethod):
 
     def _get_token_dispatcher(self):
         return TokenDispatcherWithAll2AllV(
+            top_k=self.moe_config.experts_per_token,
+            num_experts=self.moe_config.num_experts,
+            num_local_experts=self.moe_config.num_local_experts)
+
+    def _get_prepare_finalize(self):
+        return PrepareAndFinalizeWithAll2All(self.moe_config)
+
+
+class PrefillCommImpl(MoECommMethod):
+    """This implementation is for prefill scenarios with the following features:
+    1. `enable_expert_parallel=True`.
+    2. Uses `get_dispatch_layout`, `dispatch_prefill`, and `combine_prefill` operators.
+    3. For small batch sizes (bs <= 3), falls back to original All2AllV logic.
+    4. For larger batch sizes, uses the new prefill operators for better performance.
+
+    This implementation is optimized for prefill phase in MoE computation,
+    providing better performance for larger batch sizes while maintaining
+    compatibility with small batch scenarios.
+    """
+
+    def _get_token_dispatcher(self):
+        return TokenDispatcherWithPrefill(
             top_k=self.moe_config.experts_per_token,
             num_experts=self.moe_config.num_experts,
             num_local_experts=self.moe_config.num_local_experts)
