@@ -122,6 +122,87 @@ def calc_diff(x: torch.Tensor, y: torch.Tensor):
     return (1 - sim).item()
 
 
+def compare_tensors_with_saved(rank: int, save_dir: str,
+                                expandx_out_bf16: torch.Tensor,
+                                topk_ids: torch.Tensor,
+                                topk_weights: torch.Tensor,
+                                expand_idx_out: torch.Tensor,
+                                recv_count: torch.Tensor):
+    """Compare dispatch output tensors with saved combine input tensors.
+    
+    Args:
+        rank: Current rank ID
+        save_dir: Directory containing saved tensors
+        expandx_out_bf16: Hidden states output from dispatch
+        topk_ids: Top-k expert IDs
+        topk_weights: Top-k weights
+        expand_idx_out: Expanded indices from dispatch
+        recv_count: Receive counts from dispatch
+    
+    Returns:
+        bool: True if saved tensors exist and match, False otherwise
+    """
+    import os
+    
+    combine_input_path = f"{save_dir}/combine_input_rank{rank}.pt"
+    if not os.path.exists(combine_input_path):
+        if rank == 0:
+            print(f"  Note: No saved combine input found for comparison", flush=True)
+        return False
+    
+    if rank == 0:
+        print(f"\n  Comparing dispatch output with saved combine input...")
+        print(f"  " + "=" * 56, flush=True)
+    
+    # Load saved combine input tensors
+    combine_data = torch.load(combine_input_path)
+    saved_hidden_states = combine_data["hidden_states"].to("npu")
+    saved_topk_ids = combine_data["topk_ids"].to("npu")
+    saved_topk_weights = combine_data["topk_weights"].to("npu")
+    saved_expand_idx_out = combine_data["expand_idx_out"].to("npu")
+    saved_recv_count = combine_data["recv_count"].to("npu")
+    
+    # Compare tensors
+    diff_hidden = calc_diff(expandx_out_bf16.float(), saved_hidden_states.float())
+    diff_topk_ids = (topk_ids != saved_topk_ids).sum().item()
+    diff_topk_weights = calc_diff(topk_weights.float(), saved_topk_weights.float())
+    diff_expand_idx = (expand_idx_out != saved_expand_idx_out).sum().item()
+    diff_recv_count = (recv_count != saved_recv_count).sum().item()
+    
+    if rank == 0:
+        print(f"  Tensor comparison (Rank {rank}):")
+        print(f"    hidden_states diff: {diff_hidden:.2e}")
+        print(f"    topk_ids mismatches: {diff_topk_ids}/{topk_ids.numel()}")
+        print(f"    topk_weights diff: {diff_topk_weights:.2e}")
+        print(f"    expand_idx_out mismatches: {diff_expand_idx}/{expand_idx_out.numel()}")
+        print(f"    recv_count mismatches: {diff_recv_count}/{recv_count.numel()}")
+        
+        # Check if tensors are identical
+        all_match = (diff_hidden < 1e-6 and diff_topk_ids == 0 and 
+                    diff_topk_weights < 1e-6 and diff_expand_idx == 0 and 
+                    diff_recv_count == 0)
+        
+        if all_match:
+            print(f"  ✓ All tensors match saved combine inputs!", flush=True)
+        else:
+            print(f"  ✗ Tensors differ from saved combine inputs!", flush=True)
+            # Print more details for debugging
+            if diff_topk_ids > 0:
+                print(f"    First few topk_ids (dispatch): {topk_ids[0, :5]}")
+                print(f"    First few topk_ids (saved):    {saved_topk_ids[0, :5]}")
+            if diff_expand_idx > 0:
+                print(f"    First few expand_idx (dispatch): {expand_idx_out[:10]}")
+                print(f"    First few expand_idx (saved):    {saved_expand_idx_out[:10]}")
+            if diff_recv_count > 0:
+                print(f"    recv_count (dispatch): {recv_count}")
+                print(f"    recv_count (saved):    {saved_recv_count}")
+        print(flush=True)
+        
+        return all_match
+    
+    return True
+
+
 def test_with_saved_tensors(args, rank: int, world_size: int, group):
     """Test operators using saved tensors from a previous run."""
     import os
@@ -204,8 +285,12 @@ def test_with_saved_tensors(args, rank: int, world_size: int, group):
         # Cast back if quantized
         expandx_out_bf16 = per_token_cast_back(expandx_out, dynamic_scales_out) if with_quant else expandx_out
         
+        # Compare with saved combine input tensors if available
+        compare_tensors_with_saved(rank, save_dir, expandx_out_bf16, topk_ids, 
+                                   topk_weights, expand_idx_out, recv_count)
+        
         if rank == 0:
-            print(f"  Using dispatch output for combine")
+            print(f"\n  Using dispatch output for combine")
             print(f"  expandx_out shape: {expandx_out_bf16.shape}")
             print(f"  topk_ids shape: {topk_ids.shape}", flush=True)
         
