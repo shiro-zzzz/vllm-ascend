@@ -122,6 +122,122 @@ def calc_diff(x: torch.Tensor, y: torch.Tensor):
     return (1 - sim).item()
 
 
+def test_with_saved_tensors(args, rank: int, world_size: int, group):
+    """Test operators using saved tensors from a previous run."""
+    import os
+    
+    save_dir = args.tensor_save_dir
+    
+    if rank == 0:
+        print(f"\n{'='*60}")
+        print(f"Testing with saved tensors from: {save_dir}")
+        print(f"{'='*60}\n", flush=True)
+    
+    # Get HCCL communicator info
+    hccl_comm_name = group._get_backend(torch.device("npu")).get_hccl_comm_name(rank)
+    hccl_comm_name = hccl_comm_name.encode('utf-8').decode('utf-8')
+    
+    # Load dispatch input tensors
+    dispatch_input_path = f"{save_dir}/dispatch_input_rank{rank}.pt"
+    if not os.path.exists(dispatch_input_path):
+        if rank == 0:
+            print(f"Error: Saved tensors not found at {dispatch_input_path}", flush=True)
+        return
+    
+    if rank == 0:
+        print("[Test 1] Testing dispatch_prefill with saved tensors")
+        print("-" * 60, flush=True)
+    
+    dispatch_data = torch.load(dispatch_input_path)
+    hidden_states = dispatch_data["hidden_states"].to("npu")
+    topk_ids = dispatch_data["topk_ids"].to("npu")
+    topk_weights = dispatch_data["topk_weights"].to("npu")
+    num_tokens_per_expert = dispatch_data["num_tokens_per_expert"].to("npu")
+    send_token_idx_small = dispatch_data["send_token_idx_small"].to("npu")
+    with_quant = dispatch_data["with_quant"]
+    num_experts = dispatch_data["num_experts"]
+    
+    if rank == 0:
+        print(f"  Loaded dispatch inputs from rank {rank}")
+        print(f"  hidden_states shape: {hidden_states.shape}")
+        print(f"  topk_ids shape: {topk_ids.shape}")
+        print(f"  with_quant: {with_quant}", flush=True)
+    
+    # Test dispatch_prefill
+    try:
+        (expandx_out, dynamic_scales_out, expand_idx_out, 
+         recv_count, recv_tokens_per_expert) = torch.ops._C_ascend.dispatch_prefill(
+            hidden_states,
+            topk_ids,
+            topk_weights,
+            num_tokens_per_expert,
+            send_token_idx_small,
+            hccl_comm_name,
+            rank,
+            world_size,
+            with_quant)
+        
+        if rank == 0:
+            print(f"  ✓ dispatch_prefill executed successfully")
+            print(f"  expandx_out shape: {expandx_out.shape}")
+            print(f"  expand_idx_out shape: {expand_idx_out.shape}", flush=True)
+    except Exception as e:
+        if rank == 0:
+            print(f"  ✗ dispatch_prefill failed: {e}", flush=True)
+        raise
+    
+    dist.barrier()
+    
+    # Load combine input tensors (should match dispatch output)
+    combine_input_path = f"{save_dir}/combine_input_rank{rank}.pt"
+    if os.path.exists(combine_input_path):
+        if rank == 0:
+            print("\n[Test 2] Testing combine_prefill with saved tensors")
+            print("-" * 60, flush=True)
+        
+        combine_data = torch.load(combine_input_path)
+        hidden_states_combine = combine_data["hidden_states"].to("npu")
+        topk_ids_combine = combine_data["topk_ids"].to("npu")
+        topk_weights_combine = combine_data["topk_weights"].to("npu")
+        expand_idx_out_combine = combine_data["expand_idx_out"].to("npu")
+        recv_count_combine = combine_data["recv_count"].to("npu")
+        
+        if rank == 0:
+            print(f"  Loaded combine inputs from rank {rank}")
+            print(f"  hidden_states shape: {hidden_states_combine.shape}")
+            print(f"  topk_ids shape: {topk_ids_combine.shape}", flush=True)
+        
+        # Test combine_prefill
+        try:
+            combined_x = torch.ops._C_ascend.combine_prefill(
+                hidden_states_combine,
+                topk_ids_combine,
+                topk_weights_combine,
+                expand_idx_out_combine,
+                recv_count_combine,
+                hccl_comm_name,
+                rank,
+                world_size)
+            
+            if rank == 0:
+                print(f"  ✓ combine_prefill executed successfully")
+                print(f"  combined_x shape: {combined_x.shape}", flush=True)
+        except Exception as e:
+            if rank == 0:
+                print(f"  ✗ combine_prefill failed: {e}", flush=True)
+            raise
+    else:
+        if rank == 0:
+            print(f"\n  Combine input tensors not found at {combine_input_path}", flush=True)
+    
+    dist.barrier()
+    
+    if rank == 0:
+        print(f"\n{'='*60}")
+        print(f"Saved tensor validation completed!")
+        print(f"{'='*60}\n", flush=True)
+
+
 def test_moe_ops(args, local_rank: int, num_local_ranks: int):
     """Test MoE dispatch/combine operators."""
     # Initialize distributed environment
@@ -129,6 +245,12 @@ def test_moe_ops(args, local_rank: int, num_local_ranks: int):
     
     # Set random seed for reproducibility
     torch.manual_seed(rank + 42)
+    
+    # Check if we should load saved tensors for debugging
+    if args.load_saved_tensors:
+        test_with_saved_tensors(args, rank, world_size, group)
+        dist.destroy_process_group()
+        return
     
     # Parse parameters
     num_tokens = args.num_tokens
@@ -383,6 +505,17 @@ def main():
         "--use-quant",
         action="store_true",
         help="Enable dynamic quantization for communication"
+    )
+    parser.add_argument(
+        "--load-saved-tensors",
+        action="store_true",
+        help="Load and test with previously saved tensors for debugging"
+    )
+    parser.add_argument(
+        "--tensor-save-dir",
+        type=str,
+        default="/tmp/moe_debug_tensors",
+        help="Directory to load saved tensors from (default: /tmp/moe_debug_tensors)"
     )
     
     args = parser.parse_args()
