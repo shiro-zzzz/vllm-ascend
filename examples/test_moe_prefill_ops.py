@@ -127,10 +127,15 @@ def test_with_saved_tensors(args, rank: int, world_size: int, group):
     import os
     
     save_dir = args.tensor_save_dir
+    use_dispatch_output = args.use_dispatch_output
     
     if rank == 0:
         print(f"\n{'='*60}")
         print(f"Testing with saved tensors from: {save_dir}")
+        if use_dispatch_output:
+            print(f"Mode: Using dispatch output for combine (end-to-end test)")
+        else:
+            print(f"Mode: Using saved tensors separately")
         print(f"{'='*60}\n", flush=True)
     
     # Get HCCL communicator info
@@ -176,6 +181,7 @@ def test_with_saved_tensors(args, rank: int, world_size: int, group):
             rank,
             world_size,
             with_quant)
+        torch.npu.synchronize()
         
         if rank == 0:
             print(f"  ✓ dispatch_prefill executed successfully")
@@ -188,36 +194,33 @@ def test_with_saved_tensors(args, rank: int, world_size: int, group):
     
     dist.barrier()
     
-    # Load combine input tensors (should match dispatch output)
-    combine_input_path = f"{save_dir}/combine_input_rank{rank}.pt"
-    if os.path.exists(combine_input_path):
+    # Choose test mode: use dispatch output or load saved combine inputs
+    if use_dispatch_output:
+        # New mode: Use dispatch output directly for combine
         if rank == 0:
-            print("\n[Test 2] Testing combine_prefill with saved tensors")
+            print("\n[Test 2] Testing combine_prefill with dispatch output (end-to-end)")
             print("-" * 60, flush=True)
         
-        combine_data = torch.load(combine_input_path)
-        hidden_states_combine = combine_data["hidden_states"].to("npu")
-        topk_ids_combine = combine_data["topk_ids"].to("npu")
-        topk_weights_combine = combine_data["topk_weights"].to("npu")
-        expand_idx_out_combine = combine_data["expand_idx_out"].to("npu")
-        recv_count_combine = combine_data["recv_count"].to("npu")
+        # Cast back if quantized
+        expandx_out_bf16 = per_token_cast_back(expandx_out, dynamic_scales_out) if with_quant else expandx_out
         
         if rank == 0:
-            print(f"  Loaded combine inputs from rank {rank}")
-            print(f"  hidden_states shape: {hidden_states_combine.shape}")
-            print(f"  topk_ids shape: {topk_ids_combine.shape}", flush=True)
+            print(f"  Using dispatch output for combine")
+            print(f"  expandx_out shape: {expandx_out_bf16.shape}")
+            print(f"  topk_ids shape: {topk_ids.shape}", flush=True)
         
-        # Test combine_prefill
+        # Test combine_prefill with dispatch output
         try:
             combined_x = torch.ops._C_ascend.combine_prefill(
-                hidden_states_combine,
-                topk_ids_combine,
-                topk_weights_combine,
-                expand_idx_out_combine,
-                recv_count_combine,
+                expandx_out_bf16,
+                topk_ids,
+                topk_weights,
+                expand_idx_out,
+                recv_count,
                 hccl_comm_name,
                 rank,
                 world_size)
+            torch.npu.synchronize()
             
             if rank == 0:
                 print(f"  ✓ combine_prefill executed successfully")
@@ -227,8 +230,48 @@ def test_with_saved_tensors(args, rank: int, world_size: int, group):
                 print(f"  ✗ combine_prefill failed: {e}", flush=True)
             raise
     else:
-        if rank == 0:
-            print(f"\n  Combine input tensors not found at {combine_input_path}", flush=True)
+        # Original mode: Load combine input tensors separately
+        combine_input_path = f"{save_dir}/combine_input_rank{rank}.pt"
+        if os.path.exists(combine_input_path):
+            if rank == 0:
+                print("\n[Test 2] Testing combine_prefill with saved tensors")
+                print("-" * 60, flush=True)
+            
+            combine_data = torch.load(combine_input_path)
+            hidden_states_combine = combine_data["hidden_states"].to("npu")
+            topk_ids_combine = combine_data["topk_ids"].to("npu")
+            topk_weights_combine = combine_data["topk_weights"].to("npu")
+            expand_idx_out_combine = combine_data["expand_idx_out"].to("npu")
+            recv_count_combine = combine_data["recv_count"].to("npu")
+            
+            if rank == 0:
+                print(f"  Loaded combine inputs from rank {rank}")
+                print(f"  hidden_states shape: {hidden_states_combine.shape}")
+                print(f"  topk_ids shape: {topk_ids_combine.shape}", flush=True)
+            
+            # Test combine_prefill
+            try:
+                combined_x = torch.ops._C_ascend.combine_prefill(
+                    hidden_states_combine,
+                    topk_ids_combine,
+                    topk_weights_combine,
+                    expand_idx_out_combine,
+                    recv_count_combine,
+                    hccl_comm_name,
+                    rank,
+                    world_size)
+                torch.npu.synchronize()
+                
+                if rank == 0:
+                    print(f"  ✓ combine_prefill executed successfully")
+                    print(f"  combined_x shape: {combined_x.shape}", flush=True)
+            except Exception as e:
+                if rank == 0:
+                    print(f"  ✗ combine_prefill failed: {e}", flush=True)
+                raise
+        else:
+            if rank == 0:
+                print(f"\n  Combine input tensors not found at {combine_input_path}", flush=True)
     
     dist.barrier()
     
@@ -367,6 +410,7 @@ def test_moe_ops(args, local_rank: int, num_local_ranks: int):
     
     (recv_x, dynamic_scales_out, expand_idx_out, recv_count, recv_tokens_per_expert
     ) = torch.ops._C_ascend.dispatch_prefill(**dispatch_args)
+    torch.npu.synchronize()
     
     # Cast back if quantized
     recv_x_bf16 = per_token_cast_back(recv_x, dynamic_scales_out) if use_quant else recv_x
@@ -409,6 +453,7 @@ def test_moe_ops(args, local_rank: int, num_local_ranks: int):
     )
     
     combined_x = torch.ops._C_ascend.combine_prefill(**combine_args)
+    torch.npu.synchronize()
     
     combine_bytes = recv_x_bf16.numel() * 2
     
@@ -516,6 +561,11 @@ def main():
         type=str,
         default="/tmp/moe_debug_tensors",
         help="Directory to load saved tensors from (default: /tmp/moe_debug_tensors)"
+    )
+    parser.add_argument(
+        "--use-dispatch-output",
+        action="store_true",
+        help="Use dispatch output directly for combine test (end-to-end mode)"
     )
     
     args = parser.parse_args()
