@@ -29,7 +29,8 @@ import torch_npu
 from vllm.config import get_current_vllm_config
 from vllm.distributed.parallel_state import get_ep_group
 
-from vllm_ascend.distributed.parallel_state import get_mc2_group
+from vllm_ascend.distributed.parallel_state import (get_mc2_group,
+                                                     get_prefill_ep_group)
 from vllm_ascend.ops.fused_moe.comm_utils import (
     async_all_to_all, gather_from_sequence_parallel_region)
 from vllm_ascend.utils import (AscendDeviceType, get_ascend_device_type,
@@ -646,10 +647,15 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Get HCCL communication group name for EP group
-        local_rank = torch.distributed.get_rank(group=self.ep_group)
-        backend = self.ep_group._get_backend(torch.device("npu"))
+        # Get dedicated HCCL communication group for prefill operations
+        # This creates a separate communication domain to avoid conflicts
+        # with other operators using the shared EP group
+        prefill_ep_group = get_prefill_ep_group()
+        local_rank = torch.distributed.get_rank(group=prefill_ep_group.device_group)
+        backend = prefill_ep_group.device_group._get_backend(torch.device("npu"))
         self.ep_group_name = backend.get_hccl_comm_name(local_rank)
+        self.prefill_ep_rank = prefill_ep_group.rank_in_group
+        self.prefill_ep_size = prefill_ep_group.world_size
         
         # Debug: save tensors for debugging
         self.save_tensors = kwargs.get("save_tensors", False)
@@ -697,8 +703,9 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
         self.hidden_shape_before_permute = hidden_states.view(-1, hidden_states.size(-1)).shape
 
         # Step 1: Get dispatch layout
+        # Use dedicated prefill EP group's ep_size for layout calculation
         num_tokens_per_expert, send_token_idx_small = torch.ops._C_ascend.get_dispatch_layout(
-            topk_ids, self.num_experts, self.ep_size)
+            topk_ids, self.num_experts, self.prefill_ep_size)
 
         # Debug: Save dispatch input tensors
         if self.save_tensors:
@@ -708,13 +715,13 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
                 "topk_weights": topk_weights.cpu(),
                 "num_tokens_per_expert": num_tokens_per_expert.cpu(),
                 "send_token_idx_small": send_token_idx_small.cpu(),
-                "ep_rank": self.ep_rank,
-                "ep_size": self.ep_size,
+                "ep_rank": self.prefill_ep_rank,
+                "ep_size": self.prefill_ep_size,
                 "with_quant": with_quant,
                 "num_experts": self.num_experts,
-            }, f"{self.save_dir}/dispatch_input_rank{self.ep_rank}.pt")
+            }, f"{self.save_dir}/dispatch_input_rank{self.prefill_ep_rank}.pt")
         
-        # Step 2: Dispatch tokens using prefill operator
+        # Step 2: Dispatch tokens using prefill operator with dedicated EP group
         (expandx_out, dynamic_scales_out, expand_idx_out, 
          recv_count, recv_tokens_per_expert) = torch.ops._C_ascend.dispatch_prefill(
             hidden_states,
@@ -723,8 +730,8 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
             num_tokens_per_expert,
             send_token_idx_small,
             self.ep_group_name,
-            self.ep_rank,
-            self.ep_size,
+            self.prefill_ep_rank,
+            self.prefill_ep_size,
             with_quant)
         
         # Debug: Save dispatch output tensors
@@ -735,7 +742,7 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
                 "expand_idx_out": expand_idx_out.cpu(),
                 "recv_count": recv_count.cpu(),
                 "recv_tokens_per_expert": recv_tokens_per_expert.cpu(),
-            }, f"{self.save_dir}/dispatch_output_rank{self.ep_rank}.pt")
+            }, f"{self.save_dir}/dispatch_output_rank{self.prefill_ep_rank}.pt")
 
         # Build context metadata for combine phase
         context_metadata = {
@@ -772,7 +779,7 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
     def _combine_with_prefill_ops(self, hidden_states: torch.Tensor,
                                    context_metadata: dict) -> TokenCombineResult:
         """
-        Combine using the prefill operators.
+        Combine using the prefill operators with dedicated EP group.
         """
         topk_ids = context_metadata["topk_ids"]
         topk_weights = context_metadata["topk_weights"]
@@ -787,11 +794,11 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
                 "topk_weights": topk_weights.cpu(),
                 "expand_idx_out": expand_idx_out.cpu(),
                 "recv_count": recv_count.cpu(),
-                "ep_rank": self.ep_rank,
-                "ep_size": self.ep_size,
-            }, f"{self.save_dir}/combine_input_rank{self.ep_rank}.pt")
+                "ep_rank": self.prefill_ep_rank,
+                "ep_size": self.prefill_ep_size,
+            }, f"{self.save_dir}/combine_input_rank{self.prefill_ep_rank}.pt")
 
-        # Use combine_prefill operator
+        # Use combine_prefill operator with dedicated EP group
         combined_x = torch.ops._C_ascend.combine_prefill(
             hidden_states,
             topk_ids,
@@ -799,14 +806,14 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
             expand_idx_out,
             recv_count,
             self.ep_group_name,
-            self.ep_rank,
-            self.ep_size)
+            self.prefill_ep_rank,
+            self.prefill_ep_size)
         
         # Debug: Save combine output tensors
         if self.save_tensors:
             torch.save({
                 "combined_x": combined_x.cpu(),
-            }, f"{self.save_dir}/combine_output_rank{self.ep_rank}.pt")
+            }, f"{self.save_dir}/combine_output_rank{self.prefill_ep_rank}.pt")
 
         # Reshape to original hidden shape
         combined_x = combined_x.view(self.hidden_shape)

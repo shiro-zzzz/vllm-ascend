@@ -28,6 +28,9 @@ _SHARD_WEIGHT: Optional[GroupCoordinator] = None
 
 _P_TP: Optional[GroupCoordinator] = None
 
+# Dedicated EP group for TokenDispatcherWithPrefill to avoid sharing HCCL comm domain
+_PREFILL_EP: Optional[GroupCoordinator] = None
+
 
 def init_ascend_model_parallel(parallel_config: ParallelConfig, ):
     if model_parallel_initialized():
@@ -100,6 +103,15 @@ def init_ascend_model_parallel(parallel_config: ParallelConfig, ):
                                      get_world_group().local_rank,
                                      backend,
                                      group_name="mc2")
+
+    # Initialize dedicated EP group for TokenDispatcherWithPrefill
+    # This creates a separate HCCL communication domain to avoid conflicts
+    # with other communication operators using the shared EP group
+    global _PREFILL_EP
+    _PREFILL_EP = init_model_parallel_group(group_ranks,
+                                            get_world_group().local_rank,
+                                            backend,
+                                            group_name="prefill_ep")
 
     # Initialize fine-grained TP process groups on Ascend for four components:
     # 1. LM Head: output logits projection (`lmhead_tensor_parallel_size`)
@@ -314,6 +326,17 @@ def get_fc3_quant_x_group() -> GroupCoordinator:
     return _FC3_QUANT_X
 
 
+def get_prefill_ep_group() -> GroupCoordinator:
+    """Get the dedicated EP group for TokenDispatcherWithPrefill.
+    
+    This group has a separate HCCL communication domain to avoid
+    conflicts with other operators sharing the default EP group.
+    """
+    assert _PREFILL_EP is not None, (
+        "prefill EP group is not initialized")
+    return _PREFILL_EP
+
+
 def destroy_ascend_model_parallel():
     global _MC2
     if _MC2:
@@ -366,3 +389,8 @@ def destroy_ascend_model_parallel():
     if _FC3_QUANT_X:
         _FC3_QUANT_X.destroy()
     _FC3_QUANT_X = None
+
+    global _PREFILL_EP
+    if _PREFILL_EP:
+        _PREFILL_EP.destroy()
+    _PREFILL_EP = None
