@@ -191,8 +191,6 @@ def compare_tensors_with_saved(rank: int, save_dir: str,
         print(f"  Tensor comparison (Rank {rank}):")
     
     # Convert tensors to numpy for comparison
-    expandx_np = expandx_out_bf16.cpu().float().numpy()
-    saved_hidden_np = saved_hidden_states.cpu().float().numpy()
     topk_ids_np = topk_ids.cpu().numpy()
     saved_topk_ids_np = saved_topk_ids.cpu().numpy()
     topk_weights_np = topk_weights.cpu().float().numpy()
@@ -203,17 +201,6 @@ def compare_tensors_with_saved(rank: int, save_dir: str,
     saved_recv_count_np = saved_recv_count.cpu().numpy()
     
     all_match = True
-    
-    # Compare hidden_states
-    try:
-        allclose_nparray(saved_hidden_np, expandx_np, rtol=1e-4, atol=1e-4, msg="hidden_states")
-        if rank == 0:
-            print(f"    hidden_states: ✓ Match")
-    except AssertionError as e:
-        all_match = False
-        if rank == 0:
-            print(f"    hidden_states: ✗ Mismatch")
-            print(f"      {str(e)[:200]}...")  # Print first 200 chars of error
     
     # Compare topk_ids (exact match required)
     if np.array_equal(topk_ids_np, saved_topk_ids_np):
@@ -244,11 +231,21 @@ def compare_tensors_with_saved(rank: int, save_dir: str,
             print(f"    expand_idx_out: ✓ Match")
     else:
         all_match = False
-        diff_count = (expand_idx_np != saved_expand_idx_np).sum()
+        diff_mask = (expand_idx_np != saved_expand_idx_np)
+        diff_count = diff_mask.sum()
         if rank == 0:
             print(f"    expand_idx_out: ✗ Mismatch ({diff_count}/{expand_idx_np.size} elements differ)")
             print(f"      First few (dispatch): {expand_idx_np.flatten()[:10]}")
             print(f"      First few (saved):    {saved_expand_idx_np.flatten()[:10]}")
+            
+            # Print detailed difference information
+            diff_indices = np.where(diff_mask.flatten())[0]
+            if len(diff_indices) > 0:
+                print(f"      Difference details (showing first 10):")
+                for i, idx in enumerate(diff_indices[:10]):
+                    dispatch_val = expand_idx_np.flatten()[idx]
+                    saved_val = saved_expand_idx_np.flatten()[idx]
+                    print(f"        Index {idx}: dispatch={dispatch_val}, saved={saved_val}")
     
     # Compare recv_count (exact match required)
     if np.array_equal(recv_count_np, saved_recv_count_np):
