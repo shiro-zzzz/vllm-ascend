@@ -647,6 +647,35 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        # Lazy initialization flag for prefill EP group
+        # The dedicated HCCL communication group will be initialized on first token_dispatch call
+        self._prefill_ep_initialized = False
+        self.prefill_ep_device_group = None
+        self.ep_group_name = None
+        self.prefill_ep_rank = None
+        self.prefill_ep_size = None
+        
+        # Option to flush HCCL buffer before dispatch/combine operations
+        self.flush_hccl_buffer = kwargs.get("flush_hccl_buffer", False)
+        
+        # Debug: save tensors for debugging
+        self.save_tensors = kwargs.get("save_tensors", False)
+        self.save_dir = kwargs.get("save_dir", "/tmp/moe_debug_tensors")
+        if self.save_tensors:
+            import os
+            os.makedirs(self.save_dir, exist_ok=True)
+
+    def _init_prefill_ep_group(self):
+        """
+        Lazily initialize the dedicated HCCL communication group for prefill operations.
+        
+        This method is called on the first token_dispatch call to avoid initializing
+        the communication group during model construction, which may cause issues
+        if the model is moved between devices or if the parallel state is not yet ready.
+        """
+        if self._prefill_ep_initialized:
+            return
+        
         # Get dedicated HCCL communication group for prefill operations
         # This creates a separate communication domain to avoid conflicts
         # with other operators using the shared EP group
@@ -658,15 +687,7 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
         self.prefill_ep_rank = prefill_ep_group.rank_in_group
         self.prefill_ep_size = prefill_ep_group.world_size
         
-        # Option to flush HCCL buffer before dispatch/combine operations
-        self.flush_hccl_buffer = kwargs.get("flush_hccl_buffer", False)
-        
-        # Debug: save tensors for debugging
-        self.save_tensors = kwargs.get("save_tensors", False)
-        self.save_dir = kwargs.get("save_dir", "/tmp/moe_debug_tensors")
-        if self.save_tensors:
-            import os
-            os.makedirs(self.save_dir, exist_ok=True)
+        self._prefill_ep_initialized = True
 
     def _flush_hccl_buffer(self, hidden_size: int):
         """
@@ -740,6 +761,9 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
         self.with_quant = with_quant
         self.hidden_shape = hidden_states.shape
         self.hidden_shape_before_permute = hidden_states.view(-1, hidden_states.size(-1)).shape
+
+        # Lazily initialize the prefill EP group on first call
+        self._init_prefill_ep_group()
 
         # Step 1: Get dispatch layout
         # Use dedicated prefill EP group's ep_size for layout calculation

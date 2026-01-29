@@ -30,6 +30,7 @@ _P_TP: Optional[GroupCoordinator] = None
 
 # Dedicated EP group for TokenDispatcherWithPrefill to avoid sharing HCCL comm domain
 _PREFILL_EP: Optional[GroupCoordinator] = None
+_PREFILL_EP_INIT_PARAMS: Optional[dict] = None  # Parameters for lazy initialization
 
 
 def init_ascend_model_parallel(parallel_config: ParallelConfig, ):
@@ -104,14 +105,14 @@ def init_ascend_model_parallel(parallel_config: ParallelConfig, ):
                                      backend,
                                      group_name="mc2")
 
-    # Initialize dedicated EP group for TokenDispatcherWithPrefill
-    # This creates a separate HCCL communication domain to avoid conflicts
-    # with other communication operators using the shared EP group
-    global _PREFILL_EP
-    _PREFILL_EP = init_model_parallel_group(group_ranks,
-                                            get_world_group().local_rank,
-                                            backend,
-                                            group_name="prefill_ep")
+    # Save parameters for lazy initialization of _PREFILL_EP
+    # The dedicated EP group will be created on first call to get_prefill_ep_group()
+    global _PREFILL_EP_INIT_PARAMS
+    _PREFILL_EP_INIT_PARAMS = {
+        "group_ranks": group_ranks,
+        "local_rank": get_world_group().local_rank,
+        "backend": backend,
+    }
 
     # Initialize fine-grained TP process groups on Ascend for four components:
     # 1. LM Head: output logits projection (`lmhead_tensor_parallel_size`)
@@ -331,9 +332,20 @@ def get_prefill_ep_group() -> GroupCoordinator:
     
     This group has a separate HCCL communication domain to avoid
     conflicts with other operators sharing the default EP group.
+    
+    The group is lazily initialized on first call to avoid creating
+    the communication domain during model parallel initialization.
     """
-    assert _PREFILL_EP is not None, (
-        "prefill EP group is not initialized")
+    global _PREFILL_EP
+    if _PREFILL_EP is None:
+        assert _PREFILL_EP_INIT_PARAMS is not None, (
+            "prefill EP group initialization parameters are not available")
+        # Lazily create the communication domain on first call
+        _PREFILL_EP = init_model_parallel_group(
+            _PREFILL_EP_INIT_PARAMS["group_ranks"],
+            _PREFILL_EP_INIT_PARAMS["local_rank"],
+            _PREFILL_EP_INIT_PARAMS["backend"],
+            group_name="prefill_ep")
     return _PREFILL_EP
 
 
@@ -394,3 +406,6 @@ def destroy_ascend_model_parallel():
     if _PREFILL_EP:
         _PREFILL_EP.destroy()
     _PREFILL_EP = None
+    
+    global _PREFILL_EP_INIT_PARAMS
+    _PREFILL_EP_INIT_PARAMS = None
