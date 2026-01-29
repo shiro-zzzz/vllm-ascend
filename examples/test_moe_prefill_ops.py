@@ -280,7 +280,26 @@ def compare_tensors_with_saved(rank: int, save_dir: str,
             diff = np.abs(expandx_out_np - saved_hidden_states_np)
             max_diff = np.max(diff)
             mean_diff = np.mean(diff)
+            
+            # Create mask for elements with significant error
+            error_mask = diff > (1e-4 + np.abs(saved_hidden_states_np) * 1e-4)
+            error_count = np.count_nonzero(error_mask)
+            total_count = expandx_out_np.size
+            error_ratio = error_count / total_count
+            
             print(f"      Max difference: {max_diff:.6e}, Mean difference: {mean_diff:.6e}")
+            print(f"      Elements with error: {error_count}/{total_count} ({error_ratio*100:.2f}%)")
+            
+            # Print detailed difference information for first few mismatched elements
+            error_indices = np.where(error_mask.flatten())[0]
+            if len(error_indices) > 0:
+                print(f"      Difference details (showing first 10):")
+                for i, idx in enumerate(error_indices[:10]):
+                    dispatch_val = expandx_out_np.flatten()[idx]
+                    saved_val = saved_hidden_states_np.flatten()[idx]
+                    diff_val = diff.flatten()[idx]
+                    print(f"        Index {idx}: dispatch={dispatch_val:.6e}, saved={saved_val:.6e}, diff={diff_val:.6e}")
+            
             print(f"      {str(e)[:200]}...")  # Print first 200 chars of error
     
     # Compare topk_ids (exact match required)
