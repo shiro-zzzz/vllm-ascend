@@ -186,6 +186,35 @@ def compare_tensors_with_saved(rank: int, save_dir: str,
     saved_expand_idx_out = combine_data["expand_idx_out"].to("npu")
     saved_recv_count = combine_data["recv_count"].to("npu")
     
+    # Also load dispatch output to compare expand_idx_out consistency
+    dispatch_output_path = f"{save_dir}/dispatch_output_rank{rank}.pt"
+    dispatch_output_expand_idx = None
+    if os.path.exists(dispatch_output_path):
+        dispatch_output_data = torch.load(dispatch_output_path)
+        dispatch_output_expand_idx = dispatch_output_data["expand_idx_out"].to("npu")
+        
+        if rank == 0:
+            print(f"\n  Checking expand_idx_out consistency across saved files...")
+            print(f"  " + "=" * 56)
+        
+        # Compare dispatch_output vs combine_input
+        dispatch_out_np = dispatch_output_expand_idx.cpu().numpy()
+        combine_in_np = saved_expand_idx_out.cpu().numpy()
+        
+        if np.array_equal(dispatch_out_np, combine_in_np):
+            if rank == 0:
+                print(f"    ✓ dispatch_output and combine_input expand_idx_out match")
+        else:
+            diff_count = (dispatch_out_np != combine_in_np).sum()
+            if rank == 0:
+                print(f"    ✗ dispatch_output and combine_input expand_idx_out differ!")
+                print(f"      Mismatches: {diff_count}/{dispatch_out_np.size} elements")
+                print(f"      First few (dispatch_output): {dispatch_out_np.flatten()[:10]}")
+                print(f"      First few (combine_input):   {combine_in_np.flatten()[:10]}")
+        
+        if rank == 0:
+            print(flush=True)
+    
     # Compare tensors using allclose_nparray
     if rank == 0:
         print(f"  Tensor comparison (Rank {rank}):")
