@@ -175,42 +175,75 @@ def compare_tensors_with_saved(rank: int, save_dir: str,
         return False
     
     if rank == 0:
-        print(f"\n  Comparing dispatch output with saved combine input...")
+        print(f"\n  Comparing dispatch output with saved dispatch output...")
         print(f"  " + "=" * 56, flush=True)
     
-    # Load saved combine input tensors
+    # Load saved dispatch output tensors for comparison
+    dispatch_output_path = f"{save_dir}/dispatch_output_rank{rank}.pt"
+    if not os.path.exists(dispatch_output_path):
+        if rank == 0:
+            print(f"  Note: No saved dispatch output found at {dispatch_output_path}", flush=True)
+        return False
+    
+    dispatch_output_data = torch.load(dispatch_output_path)
+    saved_expandx_out = dispatch_output_data["expandx_out"].to("npu")
+    saved_dynamic_scales_out = dispatch_output_data.get("dynamic_scales_out")
+    if saved_dynamic_scales_out is not None:
+        saved_dynamic_scales_out = saved_dynamic_scales_out.to("npu")
+    saved_expand_idx_out = dispatch_output_data["expand_idx_out"].to("npu")
+    saved_recv_count = dispatch_output_data["recv_count"].to("npu")
+    
+    # Cast back saved expandx_out if it was quantized
+    saved_hidden_states = per_token_cast_back(saved_expandx_out, saved_dynamic_scales_out) if saved_dynamic_scales_out is not None else saved_expandx_out
+    
+    # Load combine input for topk_ids and topk_weights (these don't change between dispatch and combine)
     combine_data = torch.load(combine_input_path)
-    saved_hidden_states = combine_data["hidden_states"].to("npu")
     saved_topk_ids = combine_data["topk_ids"].to("npu")
     saved_topk_weights = combine_data["topk_weights"].to("npu")
-    saved_expand_idx_out = combine_data["expand_idx_out"].to("npu")
-    saved_recv_count = combine_data["recv_count"].to("npu")
     
-    # Also load dispatch output to compare expand_idx_out consistency
-    dispatch_output_path = f"{save_dir}/dispatch_output_rank{rank}.pt"
-    dispatch_output_expand_idx = None
-    if os.path.exists(dispatch_output_path):
-        dispatch_output_data = torch.load(dispatch_output_path)
-        dispatch_output_expand_idx = dispatch_output_data["expand_idx_out"].to("npu")
-        
+    # Load combine input for topk_ids and topk_weights (these don't change between dispatch and combine)
+    combine_data = torch.load(combine_input_path)
+    saved_topk_ids = combine_data["topk_ids"].to("npu")
+    saved_topk_weights = combine_data["topk_weights"].to("npu")
+    
+    # Also load combine input's expand_idx_out and recv_count to compare consistency
+    combine_expand_idx_out = combine_data["expand_idx_out"].to("npu")
+    combine_recv_count = combine_data["recv_count"].to("npu")
+    
+    if rank == 0:
+        print(f"\n  Checking expand_idx_out and recv_count consistency across saved files...")
+        print(f"  " + "=" * 56)
+    if rank == 0:
+        print(f"\n  Checking expand_idx_out and recv_count consistency across saved files...")
+        print(f"  " + "=" * 56)
+    
+    # Compare dispatch_output vs combine_input for expand_idx_out
+    dispatch_out_expand_idx_np = saved_expand_idx_out.cpu().numpy()
+    combine_in_expand_idx_np = combine_expand_idx_out.cpu().numpy()
+    
+    if np.array_equal(dispatch_out_expand_idx_np, combine_in_expand_idx_np):
         if rank == 0:
-            print(f"\n  Checking expand_idx_out consistency across saved files...")
-            print(f"  " + "=" * 56)
-        
-        # Compare dispatch_output vs combine_input
-        dispatch_out_np = dispatch_output_expand_idx.cpu().numpy()
-        combine_in_np = saved_expand_idx_out.cpu().numpy()
-        
-        if np.array_equal(dispatch_out_np, combine_in_np):
-            if rank == 0:
-                print(f"    ✓ dispatch_output and combine_input expand_idx_out match")
-        else:
-            diff_count = (dispatch_out_np != combine_in_np).sum()
-            if rank == 0:
-                print(f"    ✗ dispatch_output and combine_input expand_idx_out differ!")
-                print(f"      Mismatches: {diff_count}/{dispatch_out_np.size} elements")
-                print(f"      First few (dispatch_output): {dispatch_out_np.flatten()[:10]}")
-                print(f"      First few (combine_input):   {combine_in_np.flatten()[:10]}")
+            print(f"    ✓ dispatch_output and combine_input expand_idx_out match")
+    else:
+        diff_count = (dispatch_out_expand_idx_np != combine_in_expand_idx_np).sum()
+        if rank == 0:
+            print(f"    ✗ dispatch_output and combine_input expand_idx_out differ!")
+            print(f"      Mismatches: {diff_count}/{dispatch_out_expand_idx_np.size} elements")
+            print(f"      First few (dispatch_output): {dispatch_out_expand_idx_np.flatten()[:10]}")
+            print(f"      First few (combine_input):   {combine_in_expand_idx_np.flatten()[:10]}")
+    
+    # Compare dispatch_output vs combine_input for recv_count
+    dispatch_out_recv_count_np = saved_recv_count.cpu().numpy()
+    combine_in_recv_count_np = combine_recv_count.cpu().numpy()
+    
+    if np.array_equal(dispatch_out_recv_count_np, combine_in_recv_count_np):
+        if rank == 0:
+            print(f"    ✓ dispatch_output and combine_input recv_count match")
+    else:
+        if rank == 0:
+            print(f"    ✗ dispatch_output and combine_input recv_count differ!")
+            print(f"      recv_count (dispatch_output): {dispatch_out_recv_count_np}")
+            print(f"      recv_count (combine_input):   {combine_in_recv_count_np}")
         
         if rank == 0:
             print(flush=True)
@@ -220,6 +253,8 @@ def compare_tensors_with_saved(rank: int, save_dir: str,
         print(f"  Tensor comparison (Rank {rank}):")
     
     # Convert tensors to numpy for comparison
+    expandx_out_np = expandx_out_bf16.cpu().float().numpy()
+    saved_hidden_states_np = saved_hidden_states.cpu().float().numpy()
     topk_ids_np = topk_ids.cpu().numpy()
     saved_topk_ids_np = saved_topk_ids.cpu().numpy()
     topk_weights_np = topk_weights.cpu().float().numpy()
@@ -230,6 +265,23 @@ def compare_tensors_with_saved(rank: int, save_dir: str,
     saved_recv_count_np = saved_recv_count.cpu().numpy()
     
     all_match = True
+    
+    # Compare expandx_out (hidden_states from dispatch output vs saved combine input)
+    try:
+        allclose_nparray(saved_hidden_states_np, expandx_out_np, rtol=1e-4, atol=1e-4, msg="expandx_out")
+        if rank == 0:
+            print(f"    expandx_out: ✓ Match")
+    except AssertionError as e:
+        all_match = False
+        if rank == 0:
+            print(f"    expandx_out: ✗ Mismatch")
+            print(f"      Shape (dispatch): {expandx_out_bf16.shape}, Shape (saved): {saved_hidden_states.shape}")
+            # Calculate and display difference statistics
+            diff = np.abs(expandx_out_np - saved_hidden_states_np)
+            max_diff = np.max(diff)
+            mean_diff = np.mean(diff)
+            print(f"      Max difference: {max_diff:.6e}, Mean difference: {mean_diff:.6e}")
+            print(f"      {str(e)[:200]}...")  # Print first 200 chars of error
     
     # Compare topk_ids (exact match required)
     if np.array_equal(topk_ids_np, saved_topk_ids_np):
