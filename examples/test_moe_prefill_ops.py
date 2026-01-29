@@ -122,6 +122,30 @@ def calc_diff(x: torch.Tensor, y: torch.Tensor):
     return (1 - sim).item()
 
 
+def _count_unequal_element(data_expect, data_check, rtol, atol, msg=""):
+    """Count unequal elements between two arrays."""
+    assert data_expect.shape == data_check.shape
+    total_count = len(data_expect.flatten())
+    error = np.abs(data_expect - data_check)
+    greater = np.greater(error, atol + np.abs(data_check) * rtol)
+    loss_count = np.count_nonzero(greater)
+    assert (
+        loss_count / total_count
+    ) < rtol, "\nmsg{0}_data_expect_std:{1}\ndata_check_error:{2}\nloss:{3}".format(
+        msg, data_expect[greater], data_check[greater], error[greater]
+    )
+
+
+def allclose_nparray(data_expect, data_check, rtol=1e-4, atol=1e-4, equal_nan=True, msg=""):
+    """Check if two numpy arrays are close within tolerance."""
+    if np.any(np.isnan(data_expect)):
+        assert np.allclose(data_expect, data_check, rtol, atol, equal_nan=equal_nan)
+    elif not np.allclose(data_expect, data_check, rtol, atol, equal_nan=equal_nan):
+        _count_unequal_element(data_expect, data_check, rtol, atol, msg)
+    else:
+        assert True
+
+
 def compare_tensors_with_saved(rank: int, save_dir: str,
                                 expandx_out_bf16: torch.Tensor,
                                 topk_ids: torch.Tensor,
@@ -162,40 +186,86 @@ def compare_tensors_with_saved(rank: int, save_dir: str,
     saved_expand_idx_out = combine_data["expand_idx_out"].to("npu")
     saved_recv_count = combine_data["recv_count"].to("npu")
     
-    # Compare tensors
-    diff_hidden = calc_diff(expandx_out_bf16.float(), saved_hidden_states.float())
-    diff_topk_ids = (topk_ids != saved_topk_ids).sum().item()
-    diff_topk_weights = calc_diff(topk_weights.float(), saved_topk_weights.float())
-    diff_expand_idx = (expand_idx_out != saved_expand_idx_out).sum().item()
-    diff_recv_count = (recv_count != saved_recv_count).sum().item()
-    
+    # Compare tensors using allclose_nparray
     if rank == 0:
         print(f"  Tensor comparison (Rank {rank}):")
-        print(f"    hidden_states diff: {diff_hidden:.2e}")
-        print(f"    topk_ids mismatches: {diff_topk_ids}/{topk_ids.numel()}")
-        print(f"    topk_weights diff: {diff_topk_weights:.2e}")
-        print(f"    expand_idx_out mismatches: {diff_expand_idx}/{expand_idx_out.numel()}")
-        print(f"    recv_count mismatches: {diff_recv_count}/{recv_count.numel()}")
-        
-        # Check if tensors are identical
-        all_match = (diff_hidden < 1e-6 and diff_topk_ids == 0 and 
-                    diff_topk_weights < 1e-6 and diff_expand_idx == 0 and 
-                    diff_recv_count == 0)
-        
+    
+    # Convert tensors to numpy for comparison
+    expandx_np = expandx_out_bf16.cpu().float().numpy()
+    saved_hidden_np = saved_hidden_states.cpu().float().numpy()
+    topk_ids_np = topk_ids.cpu().numpy()
+    saved_topk_ids_np = saved_topk_ids.cpu().numpy()
+    topk_weights_np = topk_weights.cpu().float().numpy()
+    saved_topk_weights_np = saved_topk_weights.cpu().float().numpy()
+    expand_idx_np = expand_idx_out.cpu().numpy()
+    saved_expand_idx_np = saved_expand_idx_out.cpu().numpy()
+    recv_count_np = recv_count.cpu().numpy()
+    saved_recv_count_np = saved_recv_count.cpu().numpy()
+    
+    all_match = True
+    
+    # Compare hidden_states
+    try:
+        allclose_nparray(saved_hidden_np, expandx_np, rtol=1e-4, atol=1e-4, msg="hidden_states")
+        if rank == 0:
+            print(f"    hidden_states: ✓ Match")
+    except AssertionError as e:
+        all_match = False
+        if rank == 0:
+            print(f"    hidden_states: ✗ Mismatch")
+            print(f"      {str(e)[:200]}...")  # Print first 200 chars of error
+    
+    # Compare topk_ids (exact match required)
+    if np.array_equal(topk_ids_np, saved_topk_ids_np):
+        if rank == 0:
+            print(f"    topk_ids: ✓ Match")
+    else:
+        all_match = False
+        diff_count = (topk_ids_np != saved_topk_ids_np).sum()
+        if rank == 0:
+            print(f"    topk_ids: ✗ Mismatch ({diff_count}/{topk_ids_np.size} elements differ)")
+            print(f"      First few (dispatch): {topk_ids_np.flatten()[:5]}")
+            print(f"      First few (saved):    {saved_topk_ids_np.flatten()[:5]}")
+    
+    # Compare topk_weights
+    try:
+        allclose_nparray(saved_topk_weights_np, topk_weights_np, rtol=1e-4, atol=1e-4, msg="topk_weights")
+        if rank == 0:
+            print(f"    topk_weights: ✓ Match")
+    except AssertionError as e:
+        all_match = False
+        if rank == 0:
+            print(f"    topk_weights: ✗ Mismatch")
+            print(f"      {str(e)[:200]}...")  # Print first 200 chars of error
+    
+    # Compare expand_idx_out (exact match required)
+    if np.array_equal(expand_idx_np, saved_expand_idx_np):
+        if rank == 0:
+            print(f"    expand_idx_out: ✓ Match")
+    else:
+        all_match = False
+        diff_count = (expand_idx_np != saved_expand_idx_np).sum()
+        if rank == 0:
+            print(f"    expand_idx_out: ✗ Mismatch ({diff_count}/{expand_idx_np.size} elements differ)")
+            print(f"      First few (dispatch): {expand_idx_np.flatten()[:10]}")
+            print(f"      First few (saved):    {saved_expand_idx_np.flatten()[:10]}")
+    
+    # Compare recv_count (exact match required)
+    if np.array_equal(recv_count_np, saved_recv_count_np):
+        if rank == 0:
+            print(f"    recv_count: ✓ Match")
+    else:
+        all_match = False
+        if rank == 0:
+            print(f"    recv_count: ✗ Mismatch")
+            print(f"      recv_count (dispatch): {recv_count_np}")
+            print(f"      recv_count (saved):    {saved_recv_count_np}")
+    
+    if rank == 0:
         if all_match:
             print(f"  ✓ All tensors match saved combine inputs!", flush=True)
         else:
             print(f"  ✗ Tensors differ from saved combine inputs!", flush=True)
-            # Print more details for debugging
-            if diff_topk_ids > 0:
-                print(f"    First few topk_ids (dispatch): {topk_ids[0, :5]}")
-                print(f"    First few topk_ids (saved):    {saved_topk_ids[0, :5]}")
-            if diff_expand_idx > 0:
-                print(f"    First few expand_idx (dispatch): {expand_idx_out[:10]}")
-                print(f"    First few expand_idx (saved):    {saved_expand_idx_out[:10]}")
-            if diff_recv_count > 0:
-                print(f"    recv_count (dispatch): {recv_count}")
-                print(f"    recv_count (saved):    {saved_recv_count}")
         print(flush=True)
         
         return all_match
