@@ -767,8 +767,12 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
 
         # Step 1: Get dispatch layout
         # Use dedicated prefill EP group's ep_size for layout calculation
+        print(f"[Rank {self.prefill_ep_rank}] Before get_dispatch_layout: topk_ids.shape={topk_ids.shape}, num_experts={self.num_experts}, ep_size={self.prefill_ep_size}")
+        torch.npu.synchronize()
         num_tokens_per_expert, send_token_idx_small = torch.ops._C_ascend.get_dispatch_layout(
             topk_ids, self.num_experts, self.prefill_ep_size)
+        torch.npu.synchronize()
+        print(f"[Rank {self.prefill_ep_rank}] After get_dispatch_layout: num_tokens_per_expert.shape={num_tokens_per_expert.shape}, send_token_idx_small.shape={send_token_idx_small.shape}")
 
         # Debug: Save dispatch input tensors
         if self.save_tensors:
@@ -789,6 +793,8 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
             self._flush_hccl_buffer(hidden_states.size(-1))
         
         # Step 2: Dispatch tokens using prefill operator with dedicated EP group
+        print(f"[Rank {self.prefill_ep_rank}] Before dispatch_prefill: hidden_states.shape={hidden_states.shape}, topk_ids.shape={topk_ids.shape}, topk_weights.shape={topk_weights.shape}, with_quant={with_quant}")
+        torch.npu.synchronize()
         (expandx_out, dynamic_scales_out, expand_idx_out, 
          recv_count, recv_tokens_per_expert) = torch.ops._C_ascend.dispatch_prefill(
             hidden_states,
@@ -800,6 +806,8 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
             self.prefill_ep_rank,
             self.prefill_ep_size,
             with_quant)
+        torch.npu.synchronize()
+        print(f"[Rank {self.prefill_ep_rank}] After dispatch_prefill: expandx_out.shape={expandx_out.shape}, expand_idx_out.shape={expand_idx_out.shape}, recv_count.shape={recv_count.shape}, recv_tokens_per_expert.shape={recv_tokens_per_expert.shape}, dynamic_scales_out={'None' if dynamic_scales_out is None else dynamic_scales_out.shape}")
         
         # Debug: Save dispatch output tensors
         if self.save_tensors:
@@ -866,6 +874,8 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
             }, f"{self.save_dir}/combine_input_rank{self.prefill_ep_rank}.pt")
 
         # Use combine_prefill operator with dedicated EP group
+        print(f"[Rank {self.prefill_ep_rank}] Before combine_prefill: hidden_states.shape={hidden_states.shape}, topk_ids.shape={topk_ids.shape}, topk_weights.shape={topk_weights.shape}, expand_idx_out.shape={expand_idx_out.shape}, recv_count.shape={recv_count.shape}")
+        torch.npu.synchronize()
         combined_x = torch.ops._C_ascend.combine_prefill(
             hidden_states,
             topk_ids,
@@ -875,6 +885,8 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
             self.ep_group_name,
             self.prefill_ep_rank,
             self.prefill_ep_size)
+        torch.npu.synchronize()
+        print(f"[Rank {self.prefill_ep_rank}] After combine_prefill: combined_x.shape={combined_x.shape}")
         
         # Debug: Save combine output tensors
         if self.save_tensors:
