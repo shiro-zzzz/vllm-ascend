@@ -29,8 +29,7 @@ import torch_npu
 from vllm.config import get_current_vllm_config
 from vllm.distributed.parallel_state import get_ep_group
 
-from vllm_ascend.distributed.parallel_state import (get_mc2_group,
-                                                     get_prefill_ep_group)
+from vllm_ascend.distributed.parallel_state import get_mc2_group
 from vllm_ascend.ops.fused_moe.comm_utils import (
     async_all_to_all, gather_from_sequence_parallel_region)
 from vllm_ascend.utils import (AscendDeviceType, get_ascend_device_type,
@@ -672,20 +671,37 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
         This method is called on the first token_dispatch call to avoid initializing
         the communication group during model construction, which may cause issues
         if the model is moved between devices or if the parallel state is not yet ready.
+        
+        Uses dist.new_group to directly create the communication domain, similar to
+        the approach in examples/test_moe_prefill_ops.py.
         """
         if self._prefill_ep_initialized:
             return
         
-        # Get dedicated HCCL communication group for prefill operations
+        # Get EP group information from vllm's parallel state
+        ep_group = get_ep_group()
+        ep_ranks = ep_group.ranks
+        ep_world_size = ep_group.world_size
+        
+        # Create a new HCCL group directly using dist.new_group
         # This creates a separate communication domain to avoid conflicts
         # with other operators using the shared EP group
-        prefill_ep_group = get_prefill_ep_group()
-        self.prefill_ep_device_group = prefill_ep_group.device_group
+        self.prefill_ep_device_group = torch.distributed.new_group(
+            ranks=ep_ranks,
+            backend="hccl"
+        )
+        
+        # Get local rank within this group
         local_rank = torch.distributed.get_rank(group=self.prefill_ep_device_group)
+        
+        # Get HCCL communicator name from the backend
         backend = self.prefill_ep_device_group._get_backend(torch.device("npu"))
         self.ep_group_name = backend.get_hccl_comm_name(local_rank)
-        self.prefill_ep_rank = prefill_ep_group.rank_in_group
-        self.prefill_ep_size = prefill_ep_group.world_size
+        
+        # Calculate rank in group
+        global_rank = torch.distributed.get_rank()
+        self.prefill_ep_rank = ep_ranks.index(global_rank) if global_rank in ep_ranks else 0
+        self.prefill_ep_size = ep_world_size
         
         self._prefill_ep_initialized = True
 
