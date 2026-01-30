@@ -654,9 +654,6 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
         self.prefill_ep_rank = None
         self.prefill_ep_size = None
         
-        # Option to flush HCCL buffer before dispatch/combine operations
-        self.flush_hccl_buffer = kwargs.get("flush_hccl_buffer", False)
-        
         # Debug: save tensors for debugging
         self.save_tensors = kwargs.get("save_tensors", False)
         self.save_dir = kwargs.get("save_dir", "/tmp/moe_debug_tensors")
@@ -705,41 +702,6 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
         
         self._prefill_ep_initialized = True
 
-    def _flush_hccl_buffer(self, hidden_size: int):
-        """
-        Flush HCCL buffer by performing a barrier and zero-initialization.
-        
-        This method ensures the HCCL communication buffer is in a clean state
-        before performing dispatch/combine operations. It does the following:
-        1. Synchronize the NPU device to ensure all pending operations complete
-        2. Perform a dummy AllReduce with zeros to flush the HCCL buffer
-        3. Synchronize again to ensure the flush completes
-        
-        Args:
-            hidden_size: The hidden dimension size for creating the dummy tensor
-        """
-        # Synchronize to ensure all pending operations are complete
-        torch.npu.synchronize()
-        
-        # Create a small zero tensor and perform AllReduce to flush HCCL buffer
-        # The tensor size should be small to minimize overhead
-        flush_tensor = torch.zeros(
-            1, 300 * 1024 * 1024, 
-            dtype=torch.bfloat16, 
-            device=torch.npu.current_device()
-        )
-        torch.distributed.all_reduce(
-            flush_tensor, 
-            op=torch.distributed.ReduceOp.SUM,
-            group=self.prefill_ep_device_group
-        )
-        
-        # Synchronize to ensure the flush completes
-        torch.npu.synchronize()
-        
-        # Release the tensor memory
-        del flush_tensor
-
     def token_dispatch(self,
                        hidden_states: torch.Tensor,
                        topk_weights: torch.Tensor,
@@ -784,10 +746,8 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
         # Step 1: Get dispatch layout
         # Use dedicated prefill EP group's ep_size for layout calculation
         print(f"[Rank {self.prefill_ep_rank}] Before get_dispatch_layout: topk_ids.shape={topk_ids.shape}, num_experts={self.num_experts}, ep_size={self.prefill_ep_size}")
-        torch.npu.synchronize()
         num_tokens_per_expert, send_token_idx_small = torch.ops._C_ascend.get_dispatch_layout(
             topk_ids, self.num_experts, self.prefill_ep_size)
-        torch.npu.synchronize()
         print(f"[Rank {self.prefill_ep_rank}] After get_dispatch_layout: num_tokens_per_expert.shape={num_tokens_per_expert.shape}, send_token_idx_small.shape={send_token_idx_small.shape}")
 
         # Debug: Save dispatch input tensors
@@ -804,13 +764,8 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
                 "num_experts": self.num_experts,
             }, f"{self.save_dir}/dispatch_input_rank{self.prefill_ep_rank}.pt")
         
-        # Optional: Flush HCCL buffer before dispatch to ensure clean state
-        if self.flush_hccl_buffer:
-            self._flush_hccl_buffer(hidden_states.size(-1))
-        
         # Step 2: Dispatch tokens using prefill operator with dedicated EP group
         print(f"[Rank {self.prefill_ep_rank}] Before dispatch_prefill: hidden_states.shape={hidden_states.shape}, topk_ids.shape={topk_ids.shape}, topk_weights.shape={topk_weights.shape}, with_quant={with_quant}")
-        torch.npu.synchronize()
         (expandx_out, dynamic_scales_out, expand_idx_out, 
          recv_count, recv_tokens_per_expert) = torch.ops._C_ascend.dispatch_prefill(
             hidden_states,
@@ -822,7 +777,6 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
             self.prefill_ep_rank,
             self.prefill_ep_size,
             with_quant)
-        torch.npu.synchronize()
         print(f"[Rank {self.prefill_ep_rank}] After dispatch_prefill: expandx_out.shape={expandx_out.shape}, expand_idx_out.shape={expand_idx_out.shape}, recv_count.shape={recv_count.shape}, recv_tokens_per_expert.shape={recv_tokens_per_expert.shape}, dynamic_scales_out={'None' if dynamic_scales_out is None else dynamic_scales_out.shape}")
         
         # Debug: Save dispatch output tensors
@@ -891,7 +845,6 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
 
         # Use combine_prefill operator with dedicated EP group
         print(f"[Rank {self.prefill_ep_rank}] Before combine_prefill: hidden_states.shape={hidden_states.shape}, topk_ids.shape={topk_ids.shape}, topk_weights.shape={topk_weights.shape}, expand_idx_out.shape={expand_idx_out.shape}, recv_count.shape={recv_count.shape}")
-        torch.npu.synchronize()
         combined_x = torch.ops._C_ascend.combine_prefill(
             hidden_states,
             topk_ids,
@@ -901,7 +854,6 @@ class TokenDispatcherWithPrefill(TokenDispatcherWithAll2AllV):
             self.ep_group_name,
             self.prefill_ep_rank,
             self.prefill_ep_size)
-        torch.npu.synchronize()
         print(f"[Rank {self.prefill_ep_rank}] After combine_prefill: combined_x.shape={combined_x.shape}")
         
         # Debug: Save combine output tensors
