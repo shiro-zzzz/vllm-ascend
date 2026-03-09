@@ -22,6 +22,7 @@
 #include <c10/util/Exception.h>
 #include <dlfcn.h>
 #include <functional>
+#include <memory>
 #include <type_traits>
 #include <vector>
 
@@ -646,7 +647,18 @@ inline aclIntArray *ConvertCopiedType(const std::vector<int64_t> &v) {
   return ConvertType(at::IntArrayRef(v));
 }
 inline aclBoolArray *ConvertCopiedType(const std::vector<bool> &v) {
-  return ConvertType(at::ArrayRef<bool>(v));
+  // std::vector<bool> is bit-packed, cannot construct ArrayRef<bool> from it.
+  // Expand to contiguous bool storage and call aclCreateBoolArray directly.
+  static const auto aclCreateBoolArray = GET_OP_API_FUNC(aclCreateBoolArray);
+  if (aclCreateBoolArray == nullptr) {
+    return nullptr;
+  }
+  const size_t n = v.size();
+  std::unique_ptr<bool[]> buf(new bool[n]);
+  for (size_t i = 0; i < n; ++i) {
+    buf[i] = v[i];
+  }
+  return aclCreateBoolArray(buf.get(), n);
 }
 inline aclTensorList *ConvertCopiedType(const std::vector<at::Tensor> &v) {
   return ConvertType(at::TensorList(v));

@@ -3,9 +3,9 @@
 Benchmark script for comparing EXEC_NPU_CMD vs EXEC_NPU_CMD_V2
 on the get_dispatch_layout operator.
 
-Measures end-to-end performance under TASK_QUEUE_ENABLE=1 and
-TASK_QUEUE_ENABLE=2 to quantify the scheduling improvement of the V2
-calling convention.
+Measures end-to-end performance and kernel-level performance under
+TASK_QUEUE_ENABLE=1 and TASK_QUEUE_ENABLE=2 to quantify the scheduling
+improvement of the V2 calling convention.
 
 Usage:
     # Run with TASK_QUEUE_ENABLE=1 (default)
@@ -16,13 +16,21 @@ Usage:
 
     # Sweep both modes automatically
     python benchmarks/ops/bench_dispatch_layout.py --sweep
+
+    # Specify kernel name for profiling (if auto-detect fails)
+    python benchmarks/ops/bench_dispatch_layout.py --kernel-name aclnnDispatchLayout
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
+from pathlib import Path
+from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -109,6 +117,108 @@ def bench_async(fn, num_warmups: int = 50, num_tests: int = 100):
     return avg, avg, avg
 
 
+def bench_kineto(
+    fn,
+    kernel_names: Union[str, tuple],
+    num_warmups: int = 50,
+    num_tests: int = 30,
+    suppress_kineto_output: bool = True,
+):
+    """Profile with torch_npu.profiler and extract NPU kernel durations.
+
+    Args:
+        fn: callable to benchmark.
+        kernel_names: exact kernel name(s) to look for in the trace.
+        num_warmups: warmup iterations (run before profiling).
+        num_tests: iterations inside the profiling active window.
+        suppress_kineto_output: redirect profiler stdout/stderr to devnull.
+
+    Returns:
+        If kernel_names is a str  -> float (avg kernel duration in seconds).
+        If kernel_names is a tuple -> list of floats.
+    """
+    device = torch.device("npu")
+
+    # Warmup outside profiler
+    for _ in range(num_warmups):
+        fn()
+    torch.npu.synchronize()
+
+    # Redirect profiler logs if requested
+    class _SuppressOutput:
+        def __enter__(self):
+            if suppress_kineto_output:
+                self._out = open(os.devnull, "w")
+                self._err = open(os.devnull, "w")
+                self._old_stdout_fd = os.dup(sys.stdout.fileno())
+                self._old_stderr_fd = os.dup(sys.stderr.fileno())
+                os.dup2(self._out.fileno(), sys.stdout.fileno())
+                os.dup2(self._err.fileno(), sys.stderr.fileno())
+            return self
+
+        def __exit__(self, *_):
+            if suppress_kineto_output:
+                os.dup2(self._old_stdout_fd, sys.stdout.fileno())
+                os.dup2(self._old_stderr_fd, sys.stderr.fileno())
+                os.close(self._old_stdout_fd)
+                os.close(self._old_stderr_fd)
+                self._out.close()
+                self._err.close()
+
+    with _SuppressOutput():
+        schedule = torch_npu.profiler.schedule(
+            wait=1, warmup=0, active=1, repeat=1
+        )
+        with torch_npu.profiler.profile(
+            activities=[torch_npu.profiler.ProfilerActivity.NPU],
+            schedule=schedule,
+        ) as prof:
+            for step_idx in range(2):
+                for _ in range(num_tests):
+                    fn()
+                torch.npu.synchronize()
+                prof.step()
+
+    # Export trace to temp JSON
+    temp_path = Path(tempfile.gettempdir()) / f"trace_{uuid.uuid4().hex}.json"
+    prof.export_chrome_trace(str(temp_path))
+    raw_data = json.loads(temp_path.read_text())
+    os.unlink(temp_path)
+
+    # Chrome trace format: {"traceEvents": [...]} or flat list
+    if isinstance(raw_data, dict):
+        profile_data = raw_data.get("traceEvents", [])
+    else:
+        profile_data = raw_data
+
+    # Parse kernel durations
+    is_tuple = isinstance(kernel_names, tuple)
+    names = (kernel_names,) if not is_tuple else kernel_names
+
+    kernel_durations = []
+    for kname in names:
+        events = [
+            e for e in profile_data
+            if kname == e.get("name") and "dur" in e
+        ]
+        if not events:
+            # Fuzzy match: find events containing the kernel name
+            events = [
+                e for e in profile_data
+                if kname in e.get("name", "") and "dur" in e
+            ]
+        if not events:
+            print(f"  [kineto] WARNING: kernel '{kname}' not found in trace")
+            kernel_durations.append(0.0)
+            continue
+        events = sorted(events, key=lambda e: e["ts"])
+        durations = [e["dur"] / 1e6 for e in events]  # us -> s
+        avg_dur = sum(durations) / len(durations)
+        kernel_durations.append(avg_dur)
+
+    return kernel_durations if is_tuple else kernel_durations[0]
+
+
 def run_benchmark(args):
     """Run the benchmark for a single TASK_QUEUE_ENABLE setting."""
     task_queue_mode = os.environ.get("TASK_QUEUE_ENABLE", "1")
@@ -124,9 +234,10 @@ def run_benchmark(args):
     num_ranks = args.num_ranks
     num_warmups = args.num_warmups
     num_tests = args.num_tests
+    kernel_name = args.kernel_name
 
-    # ---- Helper: run one benchmark round ----
-    def _run_round(bench_fn, bench_name):
+    # ---- Helper: run one e2e benchmark round ----
+    def _run_e2e_round(bench_fn, bench_name):
         print(f"\n{'=' * 80}")
         print(f"  Dispatch Layout Benchmark  |  TASK_QUEUE_ENABLE={task_queue_mode}")
         print(f"  Mode: {bench_name}")
@@ -143,7 +254,6 @@ def run_benchmark(args):
 
         last_topk_idx = None
         for num_tokens in num_tokens_list:
-            # Generate routing data
             scores = torch.randn(
                 (num_tokens, num_experts), dtype=torch.float32, device=device
             ).abs() + 1
@@ -152,7 +262,6 @@ def run_benchmark(args):
             )[1]
             last_topk_idx = topk_idx
 
-            # ---- Benchmark get_dispatch_layout (EXEC_NPU_CMD) ----
             t_old_avg, _, _ = bench_fn(
                 lambda: torch.ops._C_ascend.get_dispatch_layout(
                     topk_idx, num_experts, num_ranks
@@ -161,7 +270,6 @@ def run_benchmark(args):
                 num_tests=num_tests,
             )
 
-            # ---- Benchmark get_dispatch_layout_v2 (EXEC_NPU_CMD_V2) ----
             t_new_avg, _, _ = bench_fn(
                 lambda: torch.ops._C_ascend.get_dispatch_layout_v2(
                     topk_idx, num_experts, num_ranks
@@ -178,29 +286,119 @@ def run_benchmark(args):
                 f"{speedup:>7.3f}x"
             )
 
-        # Correctness check with last config
-        if last_topk_idx is not None:
-            ref_expert, ref_idx = torch.ops._C_ascend.get_dispatch_layout(
-                last_topk_idx, num_experts, num_ranks
+        return last_topk_idx
+
+    # ---- Helper: run one kineto profiling round ----
+    def _run_kineto_round():
+        print(f"\n{'=' * 80}")
+        print(f"  Dispatch Layout Benchmark  |  TASK_QUEUE_ENABLE={task_queue_mode}")
+        print(f"  Mode: kernel profiling (torch_npu.profiler / kineto)")
+        print(f"  kernel_name={kernel_name}")
+        print(f"  num_experts={num_experts}, num_topk={num_topk}, num_ranks={num_ranks}")
+        print(f"  warmups={num_warmups}, profiling iterations={num_tests}")
+        print(f"{'=' * 80}")
+        print(
+            f"{'num_tokens':>12s} | "
+            f"{'CMD e2e(us)':>14s} | "
+            f"{'CMD kernel(us)':>16s} | "
+            f"{'V2 e2e(us)':>14s} | "
+            f"{'V2 kernel(us)':>16s} | "
+            f"{'e2e spdup':>10s} | "
+            f"{'kern spdup':>10s}"
+        )
+        print("-" * 105)
+
+        for num_tokens in num_tokens_list:
+            scores = torch.randn(
+                (num_tokens, num_experts), dtype=torch.float32, device=device
+            ).abs() + 1
+            topk_idx = torch.topk(
+                scores, num_topk, dim=-1, largest=True, sorted=False
+            )[1]
+
+            # e2e with bench_async (pipeline mode, most relevant)
+            t_old_e2e, _, _ = bench_async(
+                lambda: torch.ops._C_ascend.get_dispatch_layout(
+                    topk_idx, num_experts, num_ranks
+                ),
+                num_warmups=num_warmups,
+                num_tests=num_tests,
             )
-            v2_expert, v2_idx = torch.ops._C_ascend.get_dispatch_layout_v2(
-                last_topk_idx, num_experts, num_ranks
+
+            t_new_e2e, _, _ = bench_async(
+                lambda: torch.ops._C_ascend.get_dispatch_layout_v2(
+                    topk_idx, num_experts, num_ranks
+                ),
+                num_warmups=num_warmups,
+                num_tests=num_tests,
             )
-            expert_match = torch.equal(ref_expert, v2_expert)
-            idx_match = torch.equal(ref_idx, v2_idx)
-            status = "PASS" if (expert_match and idx_match) else "FAIL"
-            print(f"\nCorrectness check: {status}")
-            if not expert_match:
-                print("  WARNING: num_tokens_per_expert mismatch!")
-            if not idx_match:
-                print("  WARNING: send_token_idx_small mismatch!")
+
+            # kernel time via kineto
+            t_old_kern = bench_kineto(
+                lambda: torch.ops._C_ascend.get_dispatch_layout(
+                    topk_idx, num_experts, num_ranks
+                ),
+                kernel_names=kernel_name,
+                num_warmups=num_warmups,
+                num_tests=num_tests,
+            )
+
+            t_new_kern = bench_kineto(
+                lambda: torch.ops._C_ascend.get_dispatch_layout_v2(
+                    topk_idx, num_experts, num_ranks
+                ),
+                kernel_names=kernel_name,
+                num_warmups=num_warmups,
+                num_tests=num_tests,
+            )
+
+            e2e_speedup = (
+                t_old_e2e / t_new_e2e if t_new_e2e > 0 else float("inf")
+            )
+            kern_speedup = (
+                t_old_kern / t_new_kern
+                if t_old_kern > 0 and t_new_kern > 0
+                else float("nan")
+            )
+            print(
+                f"{num_tokens:>12d} | "
+                f"{t_old_e2e * 1e6:>14.2f} | "
+                f"{t_old_kern * 1e6:>16.2f} | "
+                f"{t_new_e2e * 1e6:>14.2f} | "
+                f"{t_new_kern * 1e6:>16.2f} | "
+                f"{e2e_speedup:>9.3f}x | "
+                f"{kern_speedup:>9.3f}x"
+            )
         print()
 
-    # ---- Round 1: per-op latency (sync per iteration) ----
-    _run_round(bench, "per-op latency (sync per iteration)")
+    # ========== Round 1: per-op latency (sync per iteration) ==========
+    last_topk_idx = _run_e2e_round(
+        bench, "per-op latency (sync per iteration)"
+    )
 
-    # ---- Round 2: pipeline throughput (sync outside loop) ----
-    _run_round(bench_async, "pipeline throughput (sync outside loop)")
+    # ========== Round 2: pipeline throughput (sync outside loop) ==========
+    _run_e2e_round(bench_async, "pipeline throughput (sync outside loop)")
+
+    # ========== Round 3: kernel profiling (kineto) ==========
+    _run_kineto_round()
+
+    # ========== Correctness check ==========
+    if last_topk_idx is not None:
+        ref_expert, ref_idx = torch.ops._C_ascend.get_dispatch_layout(
+            last_topk_idx, num_experts, num_ranks
+        )
+        v2_expert, v2_idx = torch.ops._C_ascend.get_dispatch_layout_v2(
+            last_topk_idx, num_experts, num_ranks
+        )
+        expert_match = torch.equal(ref_expert, v2_expert)
+        idx_match = torch.equal(ref_idx, v2_idx)
+        status = "PASS" if (expert_match and idx_match) else "FAIL"
+        print(f"Correctness check: {status}")
+        if not expert_match:
+            print("  WARNING: num_tokens_per_expert mismatch!")
+        if not idx_match:
+            print("  WARNING: send_token_idx_small mismatch!")
+    print()
 
 
 def sweep_modes(args):
@@ -215,6 +413,7 @@ def sweep_modes(args):
     base_cmd += ["--num-tests", str(args.num_tests)]
     for nt in args.num_tokens:
         base_cmd += ["--num-tokens", str(nt)]
+    base_cmd += ["--kernel-name", args.kernel_name]
 
     for mode in [1, 2]:
         print(f"\n>>> Launching with TASK_QUEUE_ENABLE={mode} <<<")
@@ -265,6 +464,12 @@ def main():
         "--sweep",
         action="store_true",
         help="Automatically run under both TASK_QUEUE_ENABLE=1 and 2",
+    )
+    parser.add_argument(
+        "--kernel-name",
+        type=str,
+        default="aclnnDispatchLayout",
+        help="Kernel name to match in profiler trace (default: aclnnDispatchLayout)",
     )
     args = parser.parse_args()
 
