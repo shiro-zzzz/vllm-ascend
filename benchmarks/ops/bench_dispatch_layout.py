@@ -117,6 +117,72 @@ def bench_async(fn, num_warmups: int = 50, num_tests: int = 100):
     return avg, avg, avg
 
 
+def _cpu_busy_work(duration_us: float, mat_size: int = 64):
+    """Simulate CPU-side scheduling/compute work for *duration_us* microseconds.
+
+    Uses small CPU matrix multiplications to create realistic load that
+    cannot be optimized away.  This mimics the kind of work a real
+    inference scheduler does between operator submissions (attention mask
+    construction, token bookkeeping, Python scheduling logic, etc.).
+    """
+    if duration_us <= 0:
+        return
+    a = torch.randn(mat_size, mat_size, device="cpu")
+    b = torch.randn(mat_size, mat_size, device="cpu")
+    deadline = time.perf_counter() + duration_us * 1e-6
+    while time.perf_counter() < deadline:
+        # Small CPU matmul – realistic workload, cannot be elided
+        torch.mm(a, b)
+
+
+def bench_busy(
+    fn,
+    cpu_busy_us: float = 100.0,
+    num_warmups: int = 50,
+    num_tests: int = 100,
+):
+    """Pipeline throughput with simulated main-thread CPU load.
+
+    Between each operator submission, the main thread performs CPU-side
+    work for approximately *cpu_busy_us* microseconds.  This simulates
+    real inference scheduling overhead and reveals the pipeline benefit
+    of TASK_QUEUE_ENABLE=2 + EXEC_NPU_CMD_V2:
+
+      - V1 / V2 mode 1: CPU work and NPU ConvertTypes/GetWorkspaceSize
+        both happen on the main thread serially.
+      - V2 mode 2: ConvertTypes/GetWorkspaceSize are deferred to the
+        task-queue thread, so they overlap with the CPU work → better
+        overall throughput.
+
+    Returns (avg, min, max) in seconds.
+    """
+    device = torch.device("npu")
+    torch.npu.synchronize()
+
+    cache = torch.empty(int(256e6 // 4), dtype=torch.int32, device=device)
+
+    for _ in range(num_warmups):
+        fn()
+        _cpu_busy_work(cpu_busy_us)
+
+    cache.zero_()
+    torch.npu.synchronize()
+
+    start = torch.npu.Event(enable_timing=True)
+    end = torch.npu.Event(enable_timing=True)
+
+    start.record()
+    for _ in range(num_tests):
+        fn()
+        _cpu_busy_work(cpu_busy_us)
+    end.record()
+
+    torch.npu.synchronize()
+    total_elapsed = start.elapsed_time(end) / 1e3  # ms -> s
+    avg = total_elapsed / num_tests
+    return avg, avg, avg
+
+
 def bench_kineto(
     fn,
     kernel_names: Union[str, tuple],
@@ -379,8 +445,16 @@ def run_benchmark(args):
     # ========== Round 2: pipeline throughput (sync outside loop) ==========
     _run_e2e_round(bench_async, "pipeline throughput (sync outside loop)")
 
-    # ========== Round 3: kernel profiling (kineto) ==========
-    _run_kineto_round()
+    # ========== Round 3: busy main thread (simulate inference scheduling) ====
+    cpu_busy_us = args.cpu_busy_us
+    if cpu_busy_us > 0:
+        _run_e2e_round(
+            lambda fn, **kw: bench_busy(fn, cpu_busy_us=cpu_busy_us, **kw),
+            f"busy main thread (cpu_busy={cpu_busy_us}us per iter)",
+        )
+
+    # ========== Round 4: kernel profiling (kineto) ==========
+    # _run_kineto_round()
 
     # ========== Correctness check ==========
     if last_topk_idx is not None:
@@ -413,6 +487,7 @@ def sweep_modes(args):
     base_cmd += ["--num-tests", str(args.num_tests)]
     for nt in args.num_tokens:
         base_cmd += ["--num-tokens", str(nt)]
+    base_cmd += ["--cpu-busy-us", str(args.cpu_busy_us)]
     base_cmd += ["--kernel-name", args.kernel_name]
 
     for mode in [1, 2]:
@@ -457,13 +532,20 @@ def main():
     parser.add_argument(
         "--num-tests",
         type=int,
-        default=100,
-        help="Benchmark iterations (default: 100)",
+        default=10000,
+        help="Benchmark iterations (default: 10000)",
     )
     parser.add_argument(
         "--sweep",
         action="store_true",
         help="Automatically run under both TASK_QUEUE_ENABLE=1 and 2",
+    )
+    parser.add_argument(
+        "--cpu-busy-us",
+        type=float,
+        default=100.0,
+        help="Simulated CPU busy time (us) per iteration for busy-mode round "
+             "(default: 100). Set to 0 to skip this round.",
     )
     parser.add_argument(
         "--kernel-name",
