@@ -20,6 +20,7 @@
 #include <ATen/Tensor.h>
 #include <acl/acl_base.h>
 #include <c10/util/Exception.h>
+#include <cstdlib>
 #include <dlfcn.h>
 #include <functional>
 #include <memory>
@@ -30,7 +31,7 @@
 #include <torch_npu/csrc/framework/utils/OpAdapter.h>
 #include "torch_npu/csrc/aten/NPUNativeFunctions.h"
 #include "torch_npu/csrc/core/npu/NPUStream.h"
-#include "torch_npu/csrc/core/npu/register/OptionsManager.h"
+
 #include "torch_npu/csrc/framework/OpCommand.h"
 #include "torch_npu/csrc/framework/interface/EnvVariables.h"
 #include "torch_npu/csrc/framework/utils/CalcuOpUtil.h"
@@ -749,8 +750,10 @@ auto ConvertCopiedTypes(const std::tuple<Ts...> &t, uint64_t *ws,
         #aclnn_api, " or ", #aclnn_api "GetWorkspaceSize", " not in ",        \
         GetOpApiLibName(), ", or ", GetOpApiLibName(), " not found.");        \
     auto acl_stream = c10_npu::getCurrentNPUStream().stream(false);           \
-    static const auto task_queue_enable =                                     \
-        c10_npu::option::OptionsManager::GetTaskQueueEnable();                \
+    static const uint32_t task_queue_enable = []() -> uint32_t {               \
+      const char *env_val = std::getenv("TASK_QUEUE_ENABLE");                 \
+      return env_val ? static_cast<uint32_t>(std::atoi(env_val)) : 1u;        \
+    }();                                                                      \
     if (task_queue_enable == 2) {                                             \
       /* ---- TASK_QUEUE_ENABLE=2: defer everything ---- */                   \
       auto copied_params = CopyForCaptureAll(__VA_ARGS__);                    \
