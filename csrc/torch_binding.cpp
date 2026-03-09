@@ -635,6 +635,11 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
     ops.impl("get_dispatch_layout", torch::kPrivateUse1,
              &vllm_ascend::get_dispatch_layout);
 
+    ops.def("get_dispatch_layout_v2(Tensor topk_idx, int num_experts, int "
+            "num_ranks) -> (Tensor num_tokens_per_expert, Tensor send_token_idx_small)");
+    ops.impl("get_dispatch_layout_v2", torch::kPrivateUse1,
+             &vllm_ascend::get_dispatch_layout_v2);
+
     ops.def(
         "dispatch_prefill(Tensor x, Tensor topk_idx, Tensor topk_weights, "
         "Tensor num_tokens_per_expert, Tensor send_token_idx_small, "

@@ -21,7 +21,16 @@ const int LOCAL_RANK_SIZE = 8;
 const int MAX_BATCH_SIZE = 4096;
 const int EXPERT_DATA_SIZE = 1 + MAX_BATCH_SIZE;  // 4097
 
-std::tuple<at::Tensor, at::Tensor> get_dispatch_layout(
+namespace detail {
+
+/**
+ * Core implementation of get_dispatch_layout.
+ * Template parameter UseV2 selects EXEC_NPU_CMD (false) vs
+ * EXEC_NPU_CMD_V2 (true) at compile time, avoiding any runtime
+ * branch in the hot path.
+ */
+template <bool UseV2>
+std::tuple<at::Tensor, at::Tensor> get_dispatch_layout_impl(
     const at::Tensor& topk_idx, int64_t num_experts, int64_t num_ranks) {
     // Convert topk_idx to int64 if necessary
     at::Tensor topk_idx_int64 = topk_idx.scalar_type() == at::kLong 
@@ -45,21 +54,55 @@ std::tuple<at::Tensor, at::Tensor> get_dispatch_layout(
         num_experts * EXPERT_DATA_SIZE + server_num + MAX_BATCH_SIZE * (1 + 2 * server_num + num_experts);
     auto send_token_idx_small = at::zeros({num_tokens, num_topk}, at::dtype(at::kInt).device(device));
     auto notify_send_data = at::zeros({notify_send_data_size}, at::dtype(at::kInt).device(device));
-    EXEC_NPU_CMD(aclnnDispatchLayout,
-        topk_idx_int64,
-        num_tokens,
-        num_ranks,
-        num_experts,
-        num_topk,
-        local_ranksize,
-        num_tokens_per_rank,
-        num_tokens_per_expert,
-        is_token_in_rank,
-        notify_send_data,
-        send_token_idx_small);
+
+    if constexpr (UseV2) {
+        EXEC_NPU_CMD_V2(aclnnDispatchLayout,
+            topk_idx_int64,
+            num_tokens,
+            num_ranks,
+            num_experts,
+            num_topk,
+            local_ranksize,
+            num_tokens_per_rank,
+            num_tokens_per_expert,
+            is_token_in_rank,
+            notify_send_data,
+            send_token_idx_small);
+    } else {
+        EXEC_NPU_CMD(aclnnDispatchLayout,
+            topk_idx_int64,
+            num_tokens,
+            num_ranks,
+            num_experts,
+            num_topk,
+            local_ranksize,
+            num_tokens_per_rank,
+            num_tokens_per_expert,
+            is_token_in_rank,
+            notify_send_data,
+            send_token_idx_small);
+    }
 
     return std::make_tuple(num_tokens_per_expert, send_token_idx_small);
 }
 
+} // namespace detail
+
+/**
+ * Original entry point (backward-compatible, uses EXEC_NPU_CMD).
+ */
+std::tuple<at::Tensor, at::Tensor> get_dispatch_layout(
+    const at::Tensor& topk_idx, int64_t num_experts, int64_t num_ranks) {
+    return detail::get_dispatch_layout_impl<false>(topk_idx, num_experts, num_ranks);
 }
+
+/**
+ * V2 entry point (uses EXEC_NPU_CMD_V2, supports TASK_QUEUE_ENABLE=1&2).
+ */
+std::tuple<at::Tensor, at::Tensor> get_dispatch_layout_v2(
+    const at::Tensor& topk_idx, int64_t num_experts, int64_t num_ranks) {
+    return detail::get_dispatch_layout_impl<true>(topk_idx, num_experts, num_ranks);
+}
+
+}  // namespace vllm_ascend
 #endif
